@@ -24,6 +24,38 @@ function useOutsideClose(ref, open, setOpen) {
   }, [ref, open, setOpen])
 }
 
+function useNotifications() {
+  const { t } = useApp()
+  const lib = useUD((s) => s.library)
+  const follows = useUD((s) => s.follows)
+  const prog = useUD((s) => s.progress)
+
+  return useMemo(() => {
+    const out = []
+    const ids = Object.keys(lib).slice(0, 60)
+    for (const t0 of catalog.byIds(ids)) {
+      const st = lib[t0.id].status
+      const p = prog[t0.id]
+      const followed = follows.some(
+        (f) =>
+          (f.kind === 'author' && f.name === t0.author) ||
+          (f.kind === 'series' && f.name === String(t0.id)) ||
+          (f.kind === 'translator' && f.name === t0.translator)
+      )
+      if ((st === 'reading' || followed) && t0.status === 'ongoing' && t0.updatedDays <= 3) {
+        out.push({ k: 'new', t: t0 })
+      }
+      if ((st === 'reading' || followed) && t0.chapters - (p?.max || 0) <= 3 && t0.chapters > 20 && (p?.max || 0) > 0) {
+        out.push({ k: 'finale', t: t0 })
+      }
+      if (followed && t0.status === 'completed' && t0.updatedDays < 40) {
+        out.push({ k: 'done', t: t0 })
+      }
+    }
+    return { items: out.slice(0, 12), t }
+  }, [lib, follows, prog, t])
+}
+
 function SearchBox() {
   const { t } = useApp()
   const nav = useNavigate()
@@ -99,28 +131,11 @@ function SearchBox() {
 }
 
 function Notifications() {
-  const { t } = useApp()
-  const lib = useUD((s) => s.library)
-  const follows = useUD((s) => s.follows)
-  const prog = useUD((s) => s.progress)
+  const { items, t } = useNotifications()
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
 
   useOutsideClose(wrapRef, open, setOpen)
-
-  const items = useMemo(() => {
-    const out = []
-    const ids = Object.keys(lib).slice(0, 60)
-    for (const t0 of catalog.byIds(ids)) {
-      const st = lib[t0.id].status
-      const p = prog[t0.id]
-      const followed = follows.some((f) => (f.kind === 'author' && f.name === t0.author) || (f.kind === 'series' && f.name === String(t0.id)) || (f.kind === 'translator' && f.name === t0.translator))
-      if ((st === 'reading' || followed) && t0.status === 'ongoing' && t0.updatedDays <= 3) out.push({ k: 'new', t: t0 })
-      if ((st === 'reading' || followed) && t0.chapters - (p?.max || 0) <= 3 && t0.chapters > 20 && (p?.max || 0) > 0) out.push({ k: 'finale', t: t0 })
-      if (followed && t0.status === 'completed' && t0.updatedDays < 40) out.push({ k: 'done', t: t0 })
-    }
-    return out.slice(0, 12)
-  }, [lib, follows, prog])
 
   return (
     <div className="menu-wrap" ref={wrapRef}>
@@ -174,11 +189,114 @@ function LangMenu() {
   )
 }
 
+function MobileDrawerMenu({ open, close, links }) {
+  const { t, profile, site, setQuick, theme, setTheme, lang, setLang } = useApp()
+  const { items: notifItems } = useNotifications()
+  const [showNotifs, setShowNotifs] = useState(false)
+
+  if (!open) return null
+
+  const isLight = theme === 'daylight' || theme === 'sepia'
+
+  return (
+    <div className="mobile-drawer" role="dialog" aria-label="Menu">
+      <div className="mobile-drawer-section">
+        {profile ? (
+          <Link to="/profile" className="mobile-user-row" onClick={close}>
+            <Avatar profile={profile} />
+            <div className="stack-tight">
+              <b>{profile.display || profile.username || t('nav.profile')}</b>
+              <small className="muted">{t('nav.profile')}</small>
+            </div>
+          </Link>
+        ) : (
+          <Link to="/auth" className="btn primary" onClick={close}>
+            {t('auth.signin')}
+          </Link>
+        )}
+      </div>
+
+      <nav className="mobile-nav-list">
+        {links.map(([to, k, ic]) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) => cx('nav-link', isActive && 'active')}
+            onClick={close}
+          >
+            <Icon name={ic} size={16} />{t(k)}
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="mobile-drawer-section stack">
+        <button
+          type="button"
+          className="menu-item"
+          onClick={() => setShowNotifs((v) => !v)}
+        >
+          <Icon name="bell" size={16} />
+          <span className="grow">{t('notifications')}</span>
+          {notifItems.length > 0 && <b className="count">{notifItems.length}</b>}
+        </button>
+
+        {showNotifs && (
+          <div className="mobile-sublist">
+            {!notifItems.length && <div className="menu-empty muted">{t('notifications.empty')}</div>}
+            {notifItems.map((n, i) => (
+              <Link key={i} to={`/title/${n.t.id}`} className="menu-item" onClick={close}>
+                <Icon name={n.k === 'new' ? 'zap' : n.k === 'finale' ? 'flag' : 'check'} size={14} />
+                <span><b>{n.t.title}</b><br /><small className="muted">{t('notif.' + n.k)}</small></span>
+              </Link>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          className="menu-item"
+          onClick={() => setTheme(isLight ? 'midnight' : 'daylight')}
+        >
+          <Icon name={isLight ? 'moon' : 'sun'} size={16} />
+          <span>{t('theme')}: {isLight ? t('theme.midnight') || 'Dark' : t('theme.daylight') || 'Light'}</span>
+        </button>
+
+        <button
+          type="button"
+          className="menu-item"
+          onClick={() => { close(); setQuick(true) }}
+        >
+          <Icon name="settings" size={16} />
+          <span>{t('quick.settings')}</span>
+        </button>
+
+        <div className="menu-sep">{t('language')}</div>
+        <div className="row wrap">
+          {LANGS.filter((l) => !site.disabledLangs.includes(l.code)).map((l) => (
+            <Chip
+              key={l.code}
+              active={lang === l.code}
+              onClick={() => { setLang(l.code); close() }}
+            >
+              {l.name}
+            </Chip>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Header() {
   const { t, profile, site, setQuick, theme, setTheme } = useApp()
   const [mobile, setMobile] = useState(false)
   const loc = useLocation()
-  useEffect(() => setMobile(false), [loc.pathname])
+  const headerRef = useRef(null)
+
+  useOutsideClose(headerRef, mobile, setMobile)
+  useEffect(() => { setMobile(false) }, [loc.pathname])
+
   const f = site.features
   const links = [
     ['/', 'nav.home', 'home'],
@@ -189,21 +307,27 @@ function Header() {
   ].filter(Boolean)
 
   return (
-    <header className="header glass">
+    <header className="header glass" ref={headerRef}>
       <div className="header-in">
-        <button type="button" className="icon-btn mobile-only" onClick={() => setMobile(!mobile)} aria-label="Menu" aria-expanded={mobile}>
+        <button
+          type="button"
+          className="icon-btn mobile-only"
+          onClick={() => setMobile((m) => !m)}
+          aria-label="Menu"
+          aria-expanded={mobile}
+        >
           <Icon name="menu" />
         </button>
         <Link to="/" className="brand" aria-label="Pagelight"><Logo /></Link>
-        <nav className={cx('nav', mobile && 'open')}>
+        <nav className="nav desktop-only">
           {links.map(([to, k, ic]) => (
-            <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => cx('nav-link', isActive && 'active')} onClick={() => setMobile(false)}>
+            <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => cx('nav-link', isActive && 'active')}>
               <Icon name={ic} size={16} />{t(k)}
             </NavLink>
           ))}
         </nav>
         <SearchBox />
-        <div className="header-actions">
+        <div className="header-actions desktop-only">
           <Notifications />
           <button
             type="button"
@@ -222,6 +346,8 @@ function Header() {
             : <Link to="/auth" className="btn primary sm">{t('auth.signin')}</Link>}
         </div>
       </div>
+
+      <MobileDrawerMenu open={mobile} close={() => setMobile(false)} links={links} />
     </header>
   )
 }
