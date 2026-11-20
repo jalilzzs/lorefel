@@ -262,4 +262,5 @@ kbd { font-family: ui-monospace, monospace; font-size: .72rem; padding: 1px 6px;
 @media (max-width: 600px) {
   .news-lead { padding: 18px; border-radius: 18px; }
   .news-grid { grid-template-columns: 1fr; }
+@media (max-width: 760px) { .hide-mobile { display: none; } }
 }
