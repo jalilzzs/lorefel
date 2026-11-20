@@ -2,6 +2,7 @@
 // All UI code talks to `catalog.*` and never cares which backend answers.
 import { mulberry32, lsGet, lsSet, escapeXml, hash } from './util'
 import { isLive, supabase } from './supabase'
+import { importFromSources, SOURCES } from './sources'
 
 export const CATALOG_SIZE = 100000
 export const GENRES = ['action', 'fantasy', 'romance', 'thriller', 'mystery', 'scifi', 'historical', 'sliceoflife', 'horror', 'drama', 'wuxia', 'xianxia', 'litrpg', 'psychological', 'comedy', 'sports', 'supernatural', 'isekai', 'adventure', 'school', 'mecha', 'tragedy']
@@ -250,6 +251,7 @@ async function queryLive(p) {
 
 export const catalog = {
   size: CATALOG_SIZE,
+  sources: SOURCES,
   /** Local synchronous accessor (demo catalog) — used by recommendations & history joins. */
   local: (id) => byId(id),
   allLocal: () => ensure(),
@@ -336,6 +338,20 @@ export const catalog = {
     return { total: all.length - DELETED.size, by, st, mature, noCover, extras, deleted: DELETED.size }
   },
 
+  /** Import unified items from the 10 external sources into the catalog (live or demo). */
+  async importExternal(sourceIds, opts = {}) {
+    ensure()
+    const existing = new Set(ALL.map((t) => `${t.tl}::${t.format}`))
+    const { items, report } = await importFromSources(sourceIds, { ...opts, existingTitles: existing })
+    let imported = 0
+    for (const item of items) {
+      await adminCatalog.add(item)
+      imported++
+    }
+    invalidate()
+    return { imported, report }
+  },
+
   // ---- chapters (custom overlay first)
   customChapters(id) { return OVERLAY.chapters[id] || [] },
   async loadCustomChapter(id, n, version = 'official') {
@@ -356,20 +372,47 @@ const saveOverlay = () => { OVERLAY.deleted = [...DELETED]; lsSet('pl:overlay', 
 export const adminCatalog = {
   async add(data) {
     ensure()
+    const mergedTags = [
+      ...(data.tags || []),
+      ...(data.source ? [`src:${data.source}`] : []),
+    ]
     if (isLive) {
-      const { data: row, error } = await supabase.from('titles').insert({ title: data.title, author: data.author, format: data.format, status: data.status, year: data.year, chapter_count: data.chapters, language: data.lang, genres: data.genres, tags: data.tags || [], synopsis: data.synopsis, is_mature: !!data.mature, rating: 4, rating_count: 0 }).select().single()
+      const { data: row, error } = await supabase
+        .from('titles')
+        .insert({
+          title: data.title,
+          author: data.author,
+          format: data.format,
+          status: data.status,
+          year: data.year,
+          chapter_count: data.chapters,
+          language: data.lang,
+          genres: data.genres,
+          tags: mergedTags,
+          synopsis: data.synopsis,
+          cover_url: data.cover || null,
+          is_mature: !!data.mature,
+          rating: data.rating || 4,
+          rating_count: data.votes || 0,
+        })
+        .select()
+        .single()
       if (error) throw error
-      return fromRow(row)
+      const mapped = fromRow(row)
+      ALL.push(mapped)
+      BYID.set(mapped.id, mapped)
+      invalidate()
+      return mapped
     }
     const id = Math.max(CATALOG_SIZE, ...OVERLAY.extras.map((e) => e.id)) + 1
-    const t = { votes: 0, rating: 4, velocity: 30, updatedDays: 0, hue: id % 360, pa: 0, sa: 0, sb: 0, sc: 0, tags: [], origin: 'US', ...data, id }
+    const t = { votes: 0, rating: 4, velocity: 30, updatedDays: 0, hue: id % 360, pa: 0, sa: 0, sb: 0, sc: 0, origin: 'US', cover: null, ...data, tags: mergedTags, id }
     OVERLAY.extras.push(t); const tt = { ...t, tl: t.title.toLowerCase() }; ALL.push(tt); BYID.set(id, tt)
     invalidate(); saveOverlay(); return tt
   },
   async update(id, patch) {
     ensure()
     if (isLive && byId(id)?.live) {
-      const map = { title: 'title', author: 'author', format: 'format', status: 'status', year: 'year', chapters: 'chapter_count', lang: 'language', genres: 'genres', synopsis: 'synopsis', mature: 'is_mature' }
+      const map = { title: 'title', author: 'author', format: 'format', status: 'status', year: 'year', chapters: 'chapter_count', lang: 'language', genres: 'genres', synopsis: 'synopsis', cover: 'cover_url', mature: 'is_mature' }
       const row = {}; for (const k in patch) if (map[k]) row[map[k]] = patch[k]
       const { error } = await supabase.from('titles').update(row).eq('id', id); if (error) throw error
       return
@@ -386,7 +429,7 @@ export const adminCatalog = {
     DELETED.add(id); OVERLAY.extras = OVERLAY.extras.filter((e) => e.id !== id); invalidate(); saveOverlay()
   },
   async setChapter(titleId, ch) {
-    if (isLive) { const { error } = await supabase.from('chapters').upsert({ title_id: titleId, number: ch.n, name: ch.name, content: ch.content, version: 'official' }, { onConflict: 'title_id,number,version' }); if (error) throw error; return }
+    if (isLive) { const { error } = await supabase.from('chapters').upsert({ title_id: titleId, number: ch.n, name: ch.name, content: ch.content, pages: ch.pages || null, version: 'official' }, { onConflict: 'title_id,number,version' }); if (error) throw error; return }
     const list = OVERLAY.chapters[titleId] || (OVERLAY.chapters[titleId] = [])
     const i = list.findIndex((c) => c.n === ch.n); if (i >= 0) list[i] = ch; else list.push(ch)
     list.sort((a, b) => a.n - b.n); saveOverlay()
