@@ -10,6 +10,9 @@ on:
 jobs:
   seed-chapters:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pagelight
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,13 +22,16 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install dependencies
-        run: npm install
-
       - name: Populate real chapters
         continue-on-error: true
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CHAPTER_LIMIT_PER_FORMAT: "100"
-        run: node scripts/seed-chapters.mjs
+        run: |
+          if [ -f package.json ]; then
+            npm install
+          else
+            npm install --no-save @supabase/supabase-js
+          fi
+          node scripts/seed-chapters.mjs
