@@ -1,16 +1,26 @@
-// Multi-source connectors (10 free/public libraries) unified into Pagelight's catalog shape.
+// Multi-source connectors unified into Pagelight's catalog shape, tuned for fast & reliable sources.
 
 export const SOURCES = [
-  { id: 'anilist', name: 'AniList', formats: ['manga', 'manhwa'], needsKey: false },
-  { id: 'jikan', name: 'Jikan (MAL)', formats: ['manga', 'manhwa', 'novel'], needsKey: false },
-  { id: 'openlibrary', name: 'Open Library', formats: ['novel'], needsKey: false },
-  { id: 'mangadex', name: 'MangaDex', formats: ['manga', 'manhwa'], needsKey: false },
-  { id: 'gutendex', name: 'Gutendex', formats: ['novel'], needsKey: false },
-  { id: 'archive', name: 'Internet Archive', formats: ['novel', 'manga'], needsKey: false },
-  { id: 'mangaupdates', name: 'MangaUpdates', formats: ['manga', 'manhwa', 'novel'], needsKey: false },
-  { id: 'googlebooks', name: 'Google Books', formats: ['novel', 'manga'], needsKey: true },
-  { id: 'kitsu', name: 'Kitsu', formats: ['manga', 'manhwa'], needsKey: false },
-  { id: 'comicvine', name: 'ComicVine', formats: ['manga', 'manhwa'], needsKey: true },
+  { id: 'anilist', name: 'AniList', formats: ['manga', 'manhwa'], needsKey: false, fast: true },
+  { id: 'openlibrary', name: 'Open Library', formats: ['novel'], needsKey: false, fast: true },
+  { id: 'gutendex', name: 'Gutendex', formats: ['novel'], needsKey: false, fast: true },
+  { id: 'archive', name: 'Internet Archive', formats: ['novel', 'manga'], needsKey: false, fast: true },
+  { id: 'kitsu', name: 'Kitsu', formats: ['manga', 'manhwa'], needsKey: false, fast: true },
+  { id: 'jikan', name: 'Jikan (MAL)', formats: ['manga', 'manhwa', 'novel'], needsKey: false, fast: false },
+  { id: 'mangadex', name: 'MangaDex', formats: ['manga', 'manhwa'], needsKey: false, fast: false },
+  { id: 'mangaupdates', name: 'MangaUpdates', formats: ['manga', 'manhwa', 'novel'], needsKey: false, fast: false },
+  { id: 'googlebooks', name: 'Google Books', formats: ['novel', 'manga'], needsKey: true, fast: false },
+  { id: 'comicvine', name: 'ComicVine', formats: ['manga', 'manhwa'], needsKey: true, fast: false },
+]
+
+export const FAST_SOURCE_IDS = ['anilist', 'openlibrary', 'gutendex', 'archive', 'kitsu']
+
+export const AUTO_KEYWORDS = [
+  'fantasy', 'romance', 'action', 'adventure', 'mystery', 'thriller',
+  'scifi', 'historical', 'drama', 'comedy', 'horror', 'supernatural',
+  'magic', 'dragon', 'sword', 'shadow', 'empire', 'dungeon',
+  'academy', 'chronicles', 'legend', 'secret', 'war', 'destiny',
+  'night', 'blood', 'king', 'queen', 'lost', 'immortal',
 ]
 
 const SOURCE_GENRES = [
@@ -76,7 +86,7 @@ function normalizeItem(partial) {
   }
 }
 
-async function safeFetch(url, options = {}, timeoutMs = 9000) {
+async function safeFetch(url, options = {}, timeoutMs = 7000) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
@@ -113,7 +123,7 @@ async function fetchAniList({ query, page, limit }) {
   const data = await safeFetch('https://graphql.anilist.co', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query: gql, variables: { page, perPage: limit, search: query || undefined } }),
+    body: JSON.stringify({ query: gql, variables: { page, perPage: Math.min(limit, 50), search: query || undefined } }),
   })
   const list = data?.data?.Page?.media || []
   return list.map((m) => {
@@ -144,17 +154,16 @@ async function fetchAniList({ query, page, limit }) {
 // 2. Jikan (MyAnimeList REST)
 async function fetchJikan({ query, page, limit }) {
   const q = query ? `&q=${encodeURIComponent(query)}` : ''
-  const data = await safeFetch(`https://api.jikan.moe/v4/manga?page=${page}&limit=${Math.min(limit, 25)}${q}`)
+  const data = await safeFetch(`https://api.jikan.moe/v4/manga?page=${page}&limit=${Math.min(limit, 25)}${q}`, {}, 6000)
   return (data?.data || []).map((m) => {
     const typeStr = String(m.type || '').toLowerCase()
     const format = typeStr.includes('novel') ? 'novel' : typeStr.includes('manhwa') ? 'manhwa' : 'manga'
     const st = m.status === 'Finished' ? 'completed' : m.status === 'On Hiatus' ? 'hiatus' : 'ongoing'
-    const author = m.authors?.[0]?.name || 'MAL Author'
     return normalizeItem({
       externalId: m.mal_id,
       source: 'jikan',
       title: m.title_english || m.title,
-      author,
+      author: m.authors?.[0]?.name || 'MAL Author',
       format,
       status: st,
       year: m.published?.prop?.from?.year,
@@ -170,25 +179,23 @@ async function fetchJikan({ query, page, limit }) {
 
 // 3. Open Library
 async function fetchOpenLibrary({ query, page, limit }) {
-  const q = encodeURIComponent(query || 'fantasy novel')
-  const data = await safeFetch(`https://openlibrary.org/search.json?q=${q}&page=${page}&limit=${Math.min(limit, 25)}`)
-  return (data?.docs || []).map((d) => ({
-    ...normalizeItem({
-      externalId: d.key,
-      source: 'openlibrary',
-      title: d.title,
-      author: d.author_name?.[0] || 'Open Library Author',
-      format: 'novel',
-      status: 'completed',
-      year: d.first_publish_year,
-      rating: d.ratings_average || 4.1,
-      votes: d.ratings_count || 120,
-      chapters: d.number_of_pages_median ? Math.max(10, Math.round(d.number_of_pages_median / 15)) : 20,
-      lang: ['en', 'fr', 'ar', 'zh'].includes(d.language?.[0]) ? d.language[0] : 'en',
-      genres: d.subject || ['fantasy'],
-      synopsis: d.first_sentence?.[0] || `${d.title} by ${d.author_name?.[0] || 'Unknown'}.`,
-      cover: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg` : null,
-    }),
+  const q = encodeURIComponent(query || 'fantasy')
+  const data = await safeFetch(`https://openlibrary.org/search.json?q=${q}&page=${page}&limit=${Math.min(limit, 50)}`)
+  return (data?.docs || []).map((d) => normalizeItem({
+    externalId: d.key,
+    source: 'openlibrary',
+    title: d.title,
+    author: d.author_name?.[0] || 'Open Library Author',
+    format: 'novel',
+    status: 'completed',
+    year: d.first_publish_year,
+    rating: d.ratings_average || 4.1,
+    votes: d.ratings_count || 120,
+    chapters: d.number_of_pages_median ? Math.max(10, Math.round(d.number_of_pages_median / 15)) : 20,
+    lang: ['en', 'fr', 'ar', 'zh'].includes(d.language?.[0]) ? d.language[0] : 'en',
+    genres: d.subject || ['fantasy'],
+    synopsis: d.first_sentence?.[0] || `${d.title} by ${d.author_name?.[0] || 'Unknown'}.`,
+    cover: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg` : null,
   }))
 }
 
@@ -197,7 +204,9 @@ async function fetchMangaDex({ query, page, limit }) {
   const offset = (page - 1) * Math.min(limit, 20)
   const titleParam = query ? `&title=${encodeURIComponent(query)}` : ''
   const data = await safeFetch(
-    `https://api.mangadex.org/manga?limit=${Math.min(limit, 20)}&offset=${offset}${titleParam}&includes[]=cover_art&includes[]=author`
+    `https://api.mangadex.org/manga?limit=${Math.min(limit, 20)}&offset=${offset}${titleParam}&includes[]=cover_art&includes[]=author`,
+    {},
+    6000
   )
   return (data?.data || []).map((m) => {
     const a = m.attributes || {}
@@ -232,10 +241,10 @@ async function fetchMangaDex({ query, page, limit }) {
 }
 
 // 5. Gutendex (Project Gutenberg)
-async function fetchGutendex({ query, page }) {
+async function fetchGutendex({ query, page, limit }) {
   const q = query ? `&search=${encodeURIComponent(query)}` : ''
   const data = await safeFetch(`https://gutendex.com/books/?page=${page}${q}`)
-  return (data?.results || []).slice(0, 15).map((b) => normalizeItem({
+  return (data?.results || []).slice(0, Math.min(limit, 32)).map((b) => normalizeItem({
     externalId: b.id,
     source: 'gutendex',
     title: b.title,
@@ -257,7 +266,7 @@ async function fetchGutendex({ query, page }) {
 async function fetchArchive({ query, page, limit }) {
   const q = encodeURIComponent(query ? `${query} AND mediatype:texts` : 'novel OR fiction AND mediatype:texts')
   const data = await safeFetch(
-    `https://archive.org/advancedsearch.php?q=${q}&fl[]=identifier,title,creator,year,description&rows=${Math.min(limit, 20)}&page=${page}&output=json`
+    `https://archive.org/advancedsearch.php?q=${q}&fl[]=identifier,title,creator,year,description&rows=${Math.min(limit, 40)}&page=${page}&output=json`
   )
   return (data?.response?.docs || []).map((d) => normalizeItem({
     externalId: d.identifier,
@@ -282,7 +291,7 @@ async function fetchMangaUpdates({ query, page, limit }) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ search: query || 'fantasy', page, perpage: Math.min(limit, 20) }),
-  })
+  }, 6000)
   return (data?.results || []).map((r) => {
     const rec = r.record || {}
     const t = String(rec.type || '').toLowerCase()
@@ -304,13 +313,15 @@ async function fetchMangaUpdates({ query, page, limit }) {
   })
 }
 
-// 8. Google Books (optional API key via env)
+// 8. Google Books
 async function fetchGoogleBooks({ query, page, limit, apiKey }) {
   const startIndex = (page - 1) * Math.min(limit, 20)
   const q = encodeURIComponent(query || 'fantasy fiction')
   const keyParam = apiKey ? `&key=${encodeURIComponent(apiKey)}` : ''
   const data = await safeFetch(
-    `https://www.googleapis.com/books/v1/volumes?q=${q}&startIndex=${startIndex}&maxResults=${Math.min(limit, 20)}${keyParam}`
+    `https://www.googleapis.com/books/v1/volumes?q=${q}&startIndex=${startIndex}&maxResults=${Math.min(limit, 20)}${keyParam}`,
+    {},
+    6000
   )
   return (data?.items || []).map((it) => {
     const v = it.volumeInfo || {}
@@ -364,12 +375,14 @@ async function fetchKitsu({ query, page, limit }) {
   })
 }
 
-// 10. ComicVine (optional API key via env)
+// 10. ComicVine
 async function fetchComicVine({ query, page, limit, apiKey }) {
   if (!apiKey) throw new Error('Missing ComicVine API key')
   const q = encodeURIComponent(query || 'adventure')
   const data = await safeFetch(
-    `https://comicvine.gamespot.com/api/volumes/?api_key=${encodeURIComponent(apiKey)}&format=json&filter=name:${q}&limit=${Math.min(limit, 15)}&offset=${(page - 1) * Math.min(limit, 15)}`
+    `https://comicvine.gamespot.com/api/volumes/?api_key=${encodeURIComponent(apiKey)}&format=json&filter=name:${q}&limit=${Math.min(limit, 15)}&offset=${(page - 1) * Math.min(limit, 15)}`,
+    {},
+    6000
   )
   return (data?.results || []).map((v) => normalizeItem({
     externalId: v.id,
@@ -400,33 +413,38 @@ const CONNECTORS = {
   comicvine: fetchComicVine,
 }
 
-export async function fetchFromSource(sourceId, { query = '', page = 1, limit = 12, apiKeys = {} } = {}) {
+export async function fetchFromSource(sourceId, { query = '', page = 1, limit = 25, apiKeys = {} } = {}) {
   const fn = CONNECTORS[sourceId]
   if (!fn) throw new Error(`Unknown source: ${sourceId}`)
+  const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {}
   const key =
     sourceId === 'googlebooks'
-      ? apiKeys.googlebooks || import.meta.env.VITE_GOOGLE_BOOKS_KEY || ''
+      ? apiKeys.googlebooks || env.VITE_GOOGLE_BOOKS_KEY || ''
       : sourceId === 'comicvine'
-        ? apiKeys.comicvine || import.meta.env.VITE_COMICVINE_KEY || ''
+        ? apiKeys.comicvine || env.VITE_COMICVINE_KEY || ''
         : ''
   const rows = await fn({ query, page, limit, apiKey: key })
   return rows.filter((r) => r.title)
 }
 
-/**
- * Fetch from multiple sources in parallel/sequence and deduplicate by title + format.
- */
 export async function importFromSources(
-  sourceIds = SOURCES.map((s) => s.id),
-  { query = '', page = 1, limit = 10, existingTitles = new Set(), apiKeys = {}, onProgress } = {}
+  sourceIds = FAST_SOURCE_IDS,
+  { query = '', page = 1, limit = 25, existingTitles = new Set(), apiKeys = {}, onProgress } = {}
 ) {
   const seen = new Set(existingTitles)
   const collected = []
   const report = []
 
-  for (const id of sourceIds) {
-    try {
+  const results = await Promise.allSettled(
+    sourceIds.map(async (id) => {
       const items = await fetchFromSource(id, { query, page, limit, apiKeys })
+      return { id, items }
+    })
+  )
+
+  for (const res of results) {
+    if (res.status === 'fulfilled') {
+      const { id, items } = res.value
       let addedCount = 0
       for (const item of items) {
         const key = `${item.title.toLowerCase()}::${item.format}`
@@ -436,8 +454,10 @@ export async function importFromSources(
         addedCount++
       }
       report.push({ source: id, ok: true, fetched: items.length, unique: addedCount })
-    } catch (err) {
-      report.push({ source: id, ok: false, fetched: 0, unique: 0, error: err?.message || 'Error' })
+    } else {
+      const failedIdx = report.length
+      const id = sourceIds[failedIdx] || 'unknown'
+      report.push({ source: id, ok: false, fetched: 0, unique: 0, error: res.reason?.message || 'Error' })
     }
     if (onProgress) onProgress([...report])
   }
