@@ -1,5 +1,4 @@
 // Multi-source connectors (10 free/public libraries) unified into Pagelight's catalog shape.
-import { GENRES } from './catalog'
 
 export const SOURCES = [
   { id: 'anilist', name: 'AniList', formats: ['manga', 'manhwa'], needsKey: false },
@@ -14,7 +13,13 @@ export const SOURCES = [
   { id: 'comicvine', name: 'ComicVine', formats: ['manga', 'manhwa'], needsKey: true },
 ]
 
-const GENRE_SET = new Set(GENRES)
+const SOURCE_GENRES = [
+  'action', 'fantasy', 'romance', 'thriller', 'mystery', 'scifi',
+  'historical', 'sliceoflife', 'horror', 'drama', 'wuxia', 'xianxia',
+  'litrpg', 'psychological', 'comedy', 'sports', 'supernatural',
+  'isekai', 'adventure', 'school', 'mecha', 'tragedy',
+]
+const GENRE_SET = new Set(SOURCE_GENRES)
 
 function mapGenres(rawList = [], fallback = ['adventure']) {
   const out = []
