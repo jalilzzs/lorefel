@@ -5,7 +5,8 @@ import { useApp } from '../lib/app'
 import { ADMIN_CODE, ADMIN_REQUIRE_ROLE, isLive } from '../lib/supabase'
 import { GENRES, STORY_LANGS, STATUSES, FORMATS, adminCatalog, catalog } from '../lib/catalog'
 import { DEFAULT_WEIGHTS } from '../lib/recommend'
-import { FEATURES, SOURCES, THEMES, fetchConnectorPage, moderationService, newsService, syncLogService, userAdminService } from '../lib/services'
+import { FEATURES, THEMES, fetchConnectorPage, moderationService, newsService, syncLogService, userAdminService } from '../lib/services'
+import { SOURCES, importFromSources, fetchFromSource } from '../lib/sources'
 import { LANGS } from '../lib/i18n'
 import { useAsync, useDocTitle } from '../lib/hooks'
 import { fmtDate, cx, uid } from '../lib/util'
@@ -130,6 +131,11 @@ function ChapterManager({ title, onClose }) {
 function Catalog() {
   const { t } = useApp()
   const [q, setQ] = useState('')
+  const [importQuery, setImportQuery] = useState('fantasy')
+  const [perSource, setPerSource] = useState(8)
+  const [selectedSources, setSelectedSources] = useState(() => SOURCES.map((s) => s.id))
+  const [report, setReport] = useState([])
+  const [apiKeys, setApiKeys] = useState({ googlebooks: '', comicvine: '' })
   const [tick, setTick] = useState(0)
   const [edit, setEdit] = useState(null)
   const [chap, setChap] = useState(null)
@@ -138,14 +144,68 @@ function Catalog() {
   const { data } = useAsync(() => catalog.query({ q, pageSize: 8 }), [q, tick])
   const { data: logs } = useAsync(() => syncLogService.list(), [tick])
   const bump = () => setTick((x) => x + 1)
+
+  const toggleSource = (id) => {
+    setSelectedSources((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
   const test = async (s, doImport) => {
     setBusy(s.id)
     try {
-      const rows = await fetchConnectorPage(s.id, 1)
-      if (doImport) { const n = await adminCatalog.importMany(rows); await syncLogService.add({ source: s.id, status: 'success', imported: n, message: 'Imported page 1' }); toast(t('admin.imported.n', { n }), 'success') } else toast(t('admin.connector.ok', { n: rows.length }), 'success')
-    } catch (e) { await syncLogService.add({ source: s.id, status: 'failed', failed: 1, message: String(e.message || e) }); toast(String(e.message || e), 'error') }
-    setBusy(''); bump()
+      let rows = []
+      try {
+        rows = await fetchFromSource(s.id, { query: importQuery, page: 1, limit: Number(perSource) || 8, apiKeys })
+      } catch {
+        rows = await fetchConnectorPage(s.id, 1)
+      }
+      if (doImport) {
+        const n = await adminCatalog.importMany(rows)
+        await syncLogService.add({ source: s.id, status: 'success', imported: n, message: `Imported ${n} items` })
+        toast(t('admin.imported.n', { n }), 'success')
+      } else {
+        toast(t('admin.connector.ok', { n: rows.length }), 'success')
+      }
+    } catch (e) {
+      await syncLogService.add({ source: s.id, status: 'failed', failed: 1, message: String(e.message || e) })
+      toast(String(e.message || e), 'error')
+    }
+    setBusy('')
+    bump()
   }
+
+  const runMultiImport = async () => {
+    if (!selectedSources.length) return toast('Select at least one source', 'error')
+    setBusy('multi')
+    setReport([])
+    try {
+      const existing = new Set(catalog.allLocal().map((item) => `${item.tl}::${item.format}`))
+      const { items, report: rep } = await importFromSources(selectedSources, {
+        query: importQuery,
+        page: 1,
+        limit: Number(perSource) || 8,
+        existingTitles: existing,
+        apiKeys,
+        onProgress: (liveRep) => setReport(liveRep),
+      })
+      const savedCount = items.length ? await adminCatalog.importMany(items) : 0
+      for (const r of rep) {
+        await syncLogService.add({
+          source: r.source,
+          status: r.ok ? 'success' : 'failed',
+          imported: r.ok ? r.unique : 0,
+          failed: r.ok ? 0 : 1,
+          message: r.ok ? `Fetched ${r.fetched}, unique ${r.unique}` : r.error,
+        })
+      }
+      setReport(rep)
+      toast(`Imported ${savedCount} new titles across ${selectedSources.length} sources`, 'success')
+    } catch (e) {
+      toast(String(e.message || e), 'error')
+    }
+    setBusy('')
+    bump()
+  }
+
   const simulate = async (s) => {
     setBusy('sim:' + s.id); setProgress(0)
     for (let i = 1; i <= 20; i++) { await new Promise((r) => setTimeout(r, 120)); setProgress(i * 5) }
@@ -153,14 +213,76 @@ function Catalog() {
     await syncLogService.add({ source: s.id, status: 'success', imported: n, updated: Math.floor(n * 0.3), message: 'Simulated bulk sync (demo)' })
     setBusy(''); bump(); toast(t('admin.sim.done', { n: n.toLocaleString() }), 'success')
   }
+
   return (
     <div className="stack">
-      <div className="glass pad stack"><h4>{t('admin.sources')}</h4>
-        {SOURCES.map((s) => <div key={s.id} className="row between wrap source"><div><b>{s.name}</b><br /><small className="muted">{s.kind}</small></div>
-          <div className="row wrap"><button className="btn ghost sm" disabled={!!busy} onClick={() => test(s, false)}>{t('admin.test')}</button><button className="btn ghost sm" disabled={!!busy} onClick={() => test(s, true)}><Icon name="download" size={13} />{t('admin.import.page')}</button><button className="btn primary sm" disabled={!!busy} onClick={() => simulate(s)}>{t('admin.simulate')}</button></div></div>)}
+      <div className="glass pad stack">
+        <div className="row between wrap">
+          <h4>{t('admin.sources')} ({selectedSources.length}/{SOURCES.length})</h4>
+          <div className="row wrap">
+            <button type="button" className="btn ghost sm" onClick={() => setSelectedSources(SOURCES.map((s) => s.id))}>Select All</button>
+            <button type="button" className="btn ghost sm" onClick={() => setSelectedSources([])}>Clear</button>
+            <button type="button" className="btn primary sm" disabled={!!busy || !selectedSources.length} onClick={runMultiImport}>
+              <Icon name="download" size={13} /> Import Selected ({selectedSources.length})
+            </button>
+          </div>
+        </div>
+
+        <div className="two">
+          <Field label="Import Search Keyword">
+            <input value={importQuery} onChange={(e) => setImportQuery(e.target.value)} placeholder="fantasy, action, romance..." />
+          </Field>
+          <Field label="Items Per Source">
+            <input type="number" min="1" max="25" value={perSource} onChange={(e) => setPerSource(e.target.value)} />
+          </Field>
+        </div>
+
+        <div className="two">
+          <Field label="Google Books API Key (optional)">
+            <input type="password" value={apiKeys.googlebooks} onChange={(e) => setApiKeys({ ...apiKeys, googlebooks: e.target.value })} placeholder="Optional" />
+          </Field>
+          <Field label="ComicVine API Key (optional)">
+            <input type="password" value={apiKeys.comicvine} onChange={(e) => setApiKeys({ ...apiKeys, comicvine: e.target.value })} placeholder="Optional" />
+          </Field>
+        </div>
+
+        {SOURCES.map((s) => {
+          const checked = selectedSources.includes(s.id)
+          return (
+            <div key={s.id} className="row between wrap source">
+              <label className="row" style={{ cursor: 'pointer' }}>
+                <input type="checkbox" checked={checked} onChange={() => toggleSource(s.id)} />
+                <div>
+                  <b>{s.name}</b> <span className="pill soft">{s.formats.join(' · ')}</span>
+                  <br />
+                  <small className="muted">{s.needsKey ? 'Optional API key' : 'Free public endpoint'}</small>
+                </div>
+              </label>
+              <div className="row wrap">
+                <button className="btn ghost sm" disabled={!!busy} onClick={() => test(s, false)}>{t('admin.test')}</button>
+                <button className="btn ghost sm" disabled={!!busy} onClick={() => test(s, true)}><Icon name="download" size={13} />{t('admin.import.page')}</button>
+                <button className="btn primary sm" disabled={!!busy} onClick={() => simulate(s)}>{t('admin.simulate')}</button>
+              </div>
+            </div>
+          )
+        })}
+
+        {report.length > 0 && (
+          <div className="glass pad stack">
+            <h4>Last Multi-Source Import Report</h4>
+            {report.map((r) => (
+              <div key={r.source} className="row between wrap">
+                <span><span className={cx('pill', !r.ok && 'danger')}>{r.ok ? 'OK' : 'ERR'}</span> <b>{r.source}</b></span>
+                <small className="muted">{r.ok ? `Fetched ${r.fetched} · Added ${r.unique}` : r.error}</small>
+              </div>
+            ))}
+          </div>
+        )}
+
         {busy.startsWith('sim:') && <div className="mini-progress static big"><i style={{ width: progress + '%' }} /></div>}
         <small className="muted">{t('admin.edge.hint')}</small>
       </div>
+
       <div className="glass pad stack"><h4>{t('admin.sync.logs')}</h4>{!logs?.length && <small className="muted">—</small>}{logs?.slice(0, 6).map((l) => <div key={l.id} className="row between"><span><span className={cx('pill', l.status === 'failed' && 'danger')}>{l.status}</span> {l.source} · +{l.imported} {l.message && <small className="muted">· {l.message}</small>}</span><small className="muted">{fmtDate(l.ts, 'en', { dateStyle: 'short', timeStyle: 'short' })}</small></div>)}</div>
       <div className="row between wrap"><input className="grow" placeholder={t('search.placeholder')} value={q} onChange={(e) => setQ(e.target.value)} /><button className="btn primary" onClick={() => setEdit({})}><Icon name="plus" size={16} />{t('admin.add.title')}</button></div>
       <div className="table-wrap"><table className="tbl"><tbody>{(data?.items || []).map((x) => (
