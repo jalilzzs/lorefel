@@ -48,7 +48,7 @@ const CURATED = [
 ]
 
 let ALL = null
-let BYID = new Map() // extras (admin-added or imported) with ids > CATALOG_SIZE
+let BYID = new Map()
 let ORDERS = {}
 let OVERLAY = lsGet('pl:overlay', { deleted: [], edits: {}, extras: [], chapters: {} })
 let DELETED = new Set(OVERLAY.deleted)
@@ -149,9 +149,8 @@ export function synopsisOf(t) {
   return t.synopsis || `${HOOKS[t.sa]} ${CONFLICT[t.sb]} ${STAKES[t.sc]}`
 }
 
-// ----- cover art (self-contained SVG so the demo needs no image hosting)
 const coverCache = new Map()
-export function coverOf(t, w = 300) {
+export function coverOf(t) {
   if (t.cover) return t.cover
   const key = t.id + ':' + t.title
   if (coverCache.has(key)) return coverCache.get(key)
@@ -178,7 +177,6 @@ export function coverOf(t, w = 300) {
   return uri
 }
 
-// ----- live (Supabase) row mapping
 function fromRow(r) {
   return {
     id: r.id, title: r.title, tl: (r.title || '').toLowerCase(), author: r.author || '—', translator: r.translator, format: r.format, status: r.status,
@@ -249,10 +247,32 @@ async function queryLive(p) {
   return { items: (data || []).map(fromRow), total: count ?? data.length }
 }
 
+function toDbRow(data) {
+  const mergedTags = [
+    ...(data.tags || []),
+    ...(data.source ? [`src:${data.source}`] : []),
+  ]
+  return {
+    title: data.title,
+    author: data.author || '—',
+    format: data.format || 'novel',
+    status: data.status || 'ongoing',
+    year: Number(data.year) || 2022,
+    chapter_count: Number(data.chapters) || 12,
+    language: data.lang || 'en',
+    genres: Array.isArray(data.genres) && data.genres.length ? data.genres : ['fantasy'],
+    tags: mergedTags,
+    synopsis: data.synopsis || '',
+    cover_url: data.cover || null,
+    is_mature: !!data.mature,
+    rating: Number(data.rating) || 4,
+    rating_count: Number(data.votes) || 0,
+  }
+}
+
 export const catalog = {
   size: CATALOG_SIZE,
   sources: SOURCES,
-  /** Local synchronous accessor (demo catalog) — used by recommendations & history joins. */
   local: (id) => byId(id),
   allLocal: () => ensure(),
 
@@ -307,7 +327,6 @@ export const catalog = {
     return out
   },
 
-  /** "Fans Also Loved" graph: weighted overlap of genres / tags / author, boosted by quality. */
   related(t, n = 12, crossFormat = false) {
     const src = order('popular')
     const best = []
@@ -329,7 +348,6 @@ export const catalog = {
     return best.map((b) => b.c)
   },
 
-  /** Count-per-genre etc. for dashboards */
   health() {
     const all = ensure()
     const by = { novel: 0, manhwa: 0, manga: 0 }, st = { ongoing: 0, completed: 0, hiatus: 0 }
@@ -338,21 +356,15 @@ export const catalog = {
     return { total: all.length - DELETED.size, by, st, mature, noCover, extras, deleted: DELETED.size }
   },
 
-  /** Import unified items from the 10 external sources into the catalog (live or demo). */
   async importExternal(sourceIds, opts = {}) {
     ensure()
     const existing = new Set(ALL.map((t) => `${t.tl}::${t.format}`))
     const { items, report } = await importFromSources(sourceIds, { ...opts, existingTitles: existing })
-    let imported = 0
-    for (const item of items) {
-      await adminCatalog.add(item)
-      imported++
-    }
+    const imported = await adminCatalog.importMany(items)
     invalidate()
     return { imported, report }
   },
 
-  // ---- chapters (custom overlay first)
   customChapters(id) { return OVERLAY.chapters[id] || [] },
   async loadCustomChapter(id, n, version = 'official') {
     const c = (OVERLAY.chapters[id] || []).find((x) => x.n === n)
@@ -367,7 +379,6 @@ export const catalog = {
   },
 }
 
-// ----- admin write-API (demo = overlay in localStorage, live = Supabase tables)
 const saveOverlay = () => { OVERLAY.deleted = [...DELETED]; lsSet('pl:overlay', OVERLAY) }
 export const adminCatalog = {
   async add(data) {
@@ -379,22 +390,7 @@ export const adminCatalog = {
     if (isLive) {
       const { data: row, error } = await supabase
         .from('titles')
-        .insert({
-          title: data.title,
-          author: data.author,
-          format: data.format,
-          status: data.status,
-          year: data.year,
-          chapter_count: data.chapters,
-          language: data.lang,
-          genres: data.genres,
-          tags: mergedTags,
-          synopsis: data.synopsis,
-          cover_url: data.cover || null,
-          is_mature: !!data.mature,
-          rating: data.rating || 4,
-          rating_count: data.votes || 0,
-        })
+        .insert(toDbRow(data))
         .select()
         .single()
       if (error) throw error
@@ -439,7 +435,31 @@ export const adminCatalog = {
     OVERLAY.chapters[titleId] = (OVERLAY.chapters[titleId] || []).filter((c) => c.n !== n); saveOverlay()
   },
   async importMany(list) {
-    ensure(); let n = 0
+    ensure()
+    if (!Array.isArray(list) || !list.length) return 0
+    if (isLive) {
+      const batchSize = 100
+      let totalSaved = 0
+      for (let i = 0; i < list.length; i += batchSize) {
+        const chunk = list.slice(i, i + batchSize).map(toDbRow)
+        const { data: rows, error } = await supabase.from('titles').insert(chunk).select()
+        if (!error && rows?.length) {
+          for (const r of rows) {
+            const mapped = fromRow(r)
+            ALL.push(mapped)
+            BYID.set(mapped.id, mapped)
+          }
+          totalSaved += rows.length
+        } else {
+          for (const item of list.slice(i, i + batchSize)) {
+            try { await this.add(item); totalSaved++ } catch { /* skip single error */ }
+          }
+        }
+      }
+      invalidate()
+      return totalSaved
+    }
+    let n = 0
     for (const d of list) { await this.add(d); n++ }
     return n
   },
