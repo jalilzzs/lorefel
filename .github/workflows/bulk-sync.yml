@@ -9,6 +9,9 @@ jobs:
   sync-catalog:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: pagelight
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
