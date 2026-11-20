@@ -1,0 +1,31 @@
+name: Chapters Content Sync
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Scheduled Bulk Catalog Sync"]
+    types:
+      - completed
+
+jobs:
+  seed-chapters:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Populate real chapters
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CHAPTER_LIMIT_PER_FORMAT: "100"
+        run: node scripts/seed-chapters.mjs
