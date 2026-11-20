@@ -5,11 +5,11 @@ import { useApp } from '../lib/app'
 import { ADMIN_CODE, ADMIN_REQUIRE_ROLE, isLive } from '../lib/supabase'
 import { GENRES, STORY_LANGS, STATUSES, FORMATS, adminCatalog, catalog } from '../lib/catalog'
 import { DEFAULT_WEIGHTS } from '../lib/recommend'
-import { FEATURES, THEMES, fetchConnectorPage, moderationService, newsService, syncLogService, userAdminService } from '../lib/services'
+import { FEATURES, THEMES, moderationService, newsService, syncLogService, userAdminService } from '../lib/services'
 import { SOURCES, importFromSources, fetchFromSource } from '../lib/sources'
 import { LANGS } from '../lib/i18n'
 import { useAsync, useDocTitle } from '../lib/hooks'
-import { fmtDate, cx, uid } from '../lib/util'
+import { fmtDate, cx } from '../lib/util'
 import { loc } from './News'
 import { toast } from '../lib/toast'
 
@@ -136,6 +136,9 @@ function Catalog() {
   const [selectedSources, setSelectedSources] = useState(() => SOURCES.map((s) => s.id))
   const [report, setReport] = useState([])
   const [apiKeys, setApiKeys] = useState({ googlebooks: '', comicvine: '' })
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoPage, setAutoPage] = useState(1)
+  const [autoDelaySec, setAutoDelaySec] = useState(4)
   const [tick, setTick] = useState(0)
   const [edit, setEdit] = useState(null)
   const [chap, setChap] = useState(null)
@@ -152,22 +155,33 @@ function Catalog() {
   const test = async (s, doImport) => {
     setBusy(s.id)
     try {
-      let rows = []
-      try {
-        rows = await fetchFromSource(s.id, { query: importQuery, page: 1, limit: Number(perSource) || 8, apiKeys })
-      } catch {
-        rows = await fetchConnectorPage(s.id, 1)
-      }
+      const rows = await fetchFromSource(s.id, {
+        query: importQuery,
+        page: 1,
+        limit: Number(perSource) || 8,
+        apiKeys,
+      })
       if (doImport) {
         const n = await adminCatalog.importMany(rows)
-        await syncLogService.add({ source: s.id, status: 'success', imported: n, message: `Imported ${n} items` })
+        await syncLogService.add({
+          source: s.id,
+          status: 'success',
+          imported: n,
+          message: `Imported ${n} items`,
+        })
         toast(t('admin.imported.n', { n }), 'success')
       } else {
         toast(t('admin.connector.ok', { n: rows.length }), 'success')
       }
     } catch (e) {
-      await syncLogService.add({ source: s.id, status: 'failed', failed: 1, message: String(e.message || e) })
-      toast(String(e.message || e), 'error')
+      const msg = String(e?.message || e)
+      await syncLogService.add({
+        source: s.id,
+        status: 'failed',
+        failed: 1,
+        message: msg,
+      })
+      toast(msg, 'error')
     }
     setBusy('')
     bump()
@@ -181,7 +195,7 @@ function Catalog() {
       const existing = new Set(catalog.allLocal().map((item) => `${item.tl}::${item.format}`))
       const { items, report: rep } = await importFromSources(selectedSources, {
         query: importQuery,
-        page: 1,
+        page: autoPage,
         limit: Number(perSource) || 8,
         existingTitles: existing,
         apiKeys,
@@ -206,6 +220,67 @@ function Catalog() {
     bump()
   }
 
+  useEffect(() => {
+    if (!autoRunning) return
+    let cancelled = false
+    let timerId = null
+
+    const step = async () => {
+      if (cancelled || !selectedSources.length) {
+        setAutoRunning(false)
+        return
+      }
+      setBusy('auto')
+      try {
+        const existing = new Set(catalog.allLocal().map((item) => `${item.tl}::${item.format}`))
+        const { items, report: rep } = await importFromSources(selectedSources, {
+          query: importQuery,
+          page: autoPage,
+          limit: Number(perSource) || 8,
+          existingTitles: existing,
+          apiKeys,
+          onProgress: (liveRep) => !cancelled && setReport(liveRep),
+        })
+
+        const savedCount = items.length ? await adminCatalog.importMany(items) : 0
+        for (const r of rep) {
+          await syncLogService.add({
+            source: r.source,
+            status: r.ok ? 'success' : 'failed',
+            imported: r.ok ? r.unique : 0,
+            failed: r.ok ? 0 : 1,
+            message: r.ok ? `Page ${autoPage}: fetched ${r.fetched}, unique ${r.unique}` : r.error,
+          })
+        }
+
+        if (!cancelled) {
+          setReport(rep)
+          bump()
+          if (savedCount > 0 || rep.some((r) => r.ok && r.fetched > 0)) {
+            setAutoPage((p) => p + 1)
+            timerId = setTimeout(step, Math.max(2, Number(autoDelaySec) || 4) * 1000)
+          } else {
+            setAutoRunning(false)
+            toast('No more new items found — Auto Import stopped', 'success')
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast(String(e?.message || e), 'error')
+          timerId = setTimeout(step, Math.max(4, Number(autoDelaySec) || 4) * 1000)
+        }
+      } finally {
+        if (!cancelled) setBusy('')
+      }
+    }
+
+    step()
+    return () => {
+      cancelled = true
+      if (timerId) clearTimeout(timerId)
+    }
+  }, [autoRunning, autoPage, autoDelaySec, selectedSources, importQuery, perSource, apiKeys])
+
   const simulate = async (s) => {
     setBusy('sim:' + s.id); setProgress(0)
     for (let i = 1; i <= 20; i++) { await new Promise((r) => setTimeout(r, 120)); setProgress(i * 5) }
@@ -220,20 +295,59 @@ function Catalog() {
         <div className="row between wrap">
           <h4>{t('admin.sources')} ({selectedSources.length}/{SOURCES.length})</h4>
           <div className="row wrap">
-            <button type="button" className="btn ghost sm" onClick={() => setSelectedSources(SOURCES.map((s) => s.id))}>Select All</button>
-            <button type="button" className="btn ghost sm" onClick={() => setSelectedSources([])}>Clear</button>
-            <button type="button" className="btn primary sm" disabled={!!busy || !selectedSources.length} onClick={runMultiImport}>
+            <button type="button" className="btn ghost sm" disabled={autoRunning} onClick={() => setSelectedSources(SOURCES.map((s) => s.id))}>Select All</button>
+            <button type="button" className="btn ghost sm" disabled={autoRunning} onClick={() => setSelectedSources([])}>Clear</button>
+            <button type="button" className="btn primary sm" disabled={!!busy || autoRunning || !selectedSources.length} onClick={runMultiImport}>
               <Icon name="download" size={13} /> Import Selected ({selectedSources.length})
             </button>
+            {!autoRunning ? (
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={!!busy || !selectedSources.length}
+                onClick={() => setAutoRunning(true)}
+              >
+                Auto Import (p.{autoPage})
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn danger sm"
+                onClick={() => setAutoRunning(false)}
+              >
+                Stop Auto
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="two">
+        <div className="three">
           <Field label="Import Search Keyword">
-            <input value={importQuery} onChange={(e) => setImportQuery(e.target.value)} placeholder="fantasy, action, romance..." />
+            <input
+              value={importQuery}
+              disabled={autoRunning}
+              onChange={(e) => { setImportQuery(e.target.value); setAutoPage(1) }}
+              placeholder="fantasy, action, romance..."
+            />
           </Field>
           <Field label="Items Per Source">
-            <input type="number" min="1" max="25" value={perSource} onChange={(e) => setPerSource(e.target.value)} />
+            <input
+              type="number"
+              min="1"
+              max="25"
+              disabled={autoRunning}
+              value={perSource}
+              onChange={(e) => setPerSource(e.target.value)}
+            />
+          </Field>
+          <Field label="Auto Delay (sec)">
+            <input
+              type="number"
+              min="2"
+              max="60"
+              value={autoDelaySec}
+              onChange={(e) => setAutoDelaySec(e.target.value)}
+            />
           </Field>
         </div>
 
@@ -251,7 +365,7 @@ function Catalog() {
           return (
             <div key={s.id} className="row between wrap source">
               <label className="row" style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={checked} onChange={() => toggleSource(s.id)} />
+                <input type="checkbox" checked={checked} disabled={autoRunning} onChange={() => toggleSource(s.id)} />
                 <div>
                   <b>{s.name}</b> <span className="pill soft">{s.formats.join(' · ')}</span>
                   <br />
@@ -259,9 +373,9 @@ function Catalog() {
                 </div>
               </label>
               <div className="row wrap">
-                <button className="btn ghost sm" disabled={!!busy} onClick={() => test(s, false)}>{t('admin.test')}</button>
-                <button className="btn ghost sm" disabled={!!busy} onClick={() => test(s, true)}><Icon name="download" size={13} />{t('admin.import.page')}</button>
-                <button className="btn primary sm" disabled={!!busy} onClick={() => simulate(s)}>{t('admin.simulate')}</button>
+                <button className="btn ghost sm" disabled={!!busy || autoRunning} onClick={() => test(s, false)}>{t('admin.test')}</button>
+                <button className="btn ghost sm" disabled={!!busy || autoRunning} onClick={() => test(s, true)}><Icon name="download" size={13} />{t('admin.import.page')}</button>
+                <button className="btn primary sm" disabled={!!busy || autoRunning} onClick={() => simulate(s)}>{t('admin.simulate')}</button>
               </div>
             </div>
           )
@@ -269,7 +383,7 @@ function Catalog() {
 
         {report.length > 0 && (
           <div className="glass pad stack">
-            <h4>Last Multi-Source Import Report</h4>
+            <h4>Last Multi-Source Import Report (Page {Math.max(1, autoRunning ? autoPage : autoPage - 1)})</h4>
             {report.map((r) => (
               <div key={r.source} className="row between wrap">
                 <span><span className={cx('pill', !r.ok && 'danger')}>{r.ok ? 'OK' : 'ERR'}</span> <b>{r.source}</b></span>
