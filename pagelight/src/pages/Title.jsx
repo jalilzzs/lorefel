@@ -13,6 +13,8 @@ import { actions, useUD } from '../lib/userdata'
 import { cx, fmtMinutes, fmtNum, prettify } from '../lib/util'
 import { toast } from '../lib/toast'
 
+const EMPTY_ARR = []
+
 function ChapterList({ title }) {
   const { t } = useApp()
   const prog = useUD((s) => s.progress[title.id])
@@ -45,26 +47,27 @@ function ChapterList({ title }) {
 
 export default function Title() {
   const { id } = useParams()
-  const { t, tx, canView, profile, rp, setRp, updateProfile } = useApp()
+  const numId = Number(id)
+  const { t, tx, canView, profile, rp, updateProfile } = useApp()
   const nav = useNavigate()
-  const { data: title, loading } = useAsync(() => catalog.get(id), [id])
-  const prog = useUD((s) => s.progress[+id])
-  const status = useUD((s) => s.library[+id]?.status)
+  const { data: title, loading } = useAsync(() => catalog.get(numId), [numId])
+  const prog = useUD((s) => s.progress[numId])
+  const status = useUD((s) => s.library[numId]?.status)
   const follows = useUD((s) => s.follows)
-  const votes = useUD((s) => s.tagVotes[+id] || [])
-  const muted = useUD((s) => s.mutedTags)
-  const ud = useUD((s) => s)
+  const votes = useUD((s) => s.tagVotes[numId] ?? EMPTY_ARR)
+  const muted = useUD((s) => s.mutedTags ?? EMPTY_ARR)
+  const prefs = useUD((s) => s.prefs)
   const [tab, setTab] = useState('overview')
   const [share, setShare] = useState(null)
   const [quiz, setQuiz] = useState(false)
   const [revealTags, setRevealTags] = useState(false)
   useDocTitle(title?.title, title ? synopsisOf(title).slice(0, 150) : '')
-  useEffect(() => { setTab('overview') }, [id])
+  useEffect(() => { setTab('overview'); setRevealTags(false) }, [numId])
   useEffect(() => {
     const h = () => { if (title) { const s = status ? null : 'plan'; actions.setStatus(title.id, s); toast(s ? t('saved.to', { list: t('list.plan') }) : t('removed'), 'success') } }
     window.addEventListener('pl:bookmark', h); return () => window.removeEventListener('pl:bookmark', h)
   }, [title, status, t])
-  const wpm = readingSpeed(ud)
+  const wpm = useMemo(() => readingSpeed({ prefs }), [prefs])
   const related = useMemo(() => (title ? catalog.related(title, 14) : []), [title])
   const fans = useMemo(() => (title ? catalog.related(title, 14, true) : []), [title])
   if (loading) return <div className="page"><Skeleton h={320} r={20} /></div>
