@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import { stripGutenberg, splitChapters, toParagraphs } from './text.mjs';
+import { toRecord, qualifyMeta } from './gutendex.mjs';
+import { norm, normAuthor, RateLimiter, withRetry } from './core.mjs';
+const body = (n) => ('Lorem sentence about chapter. '.repeat(12) + '\nstill same paragraph line.\n\nSecond paragraph here. ' + 'word '.repeat(30));
+const raw = `Header junk\n*** START OF THE PROJECT GUTENBERG EBOOK X ***\n\nCONTENTS\n\nCHAPTER I.\n\nCHAPTER II.\n\nCHAPTER III.\n\n\nCHAPTER I.\n\n${body()}\n\nCHAPTER II.\n\n${body()}\n\nCHAPTER III.\n\n${body()}\n*** END OF THE PROJECT GUTENBERG EBOOK X ***\nlicense text`;
+const ch = splitChapters(stripGutenberg(raw));
+assert.equal(ch.length, 3); assert.equal(ch[0].split_method, 'source_headings'); assert.equal(ch[0].paragraphs.length, 2);
+assert.ok(!ch[0].paragraphs[0].includes('\n')); assert.ok(!JSON.stringify(ch).includes('license text'));
+// No headings => one honest section, never fake splits
+const flat = splitChapters('Para one text.\n\nPara two text.\n\nPara three.'); assert.equal(flat.length, 1); assert.equal(flat[0].split_method, 'single_section');
+assert.equal(splitChapters('').length, 0);
+assert.equal(normAuthor('Austen, Jane'), 'jane austen'); assert.equal(norm('Émile (Vol. 1)'), 'emile');
+const rec = toRecord({ id: 1, title: 'T', authors: [{ name: 'A, B' }], languages: ['en'], subjects: ['Fiction'], copyright: false, formats: { 'text/plain; charset=utf-8': 'http://x/1.txt' } });
+assert.equal(qualifyMeta(rec), null); assert.equal(qualifyMeta({ ...rec, copyright: null }), 'copyright_unknown_or_true'); assert.equal(qualifyMeta({ ...rec, text_url: null }), 'no_text_format');
+let n = 0; assert.equal(await withRetry(async () => { if (++n < 3) throw new Error('x'); return 'ok'; }, { base: 1 }), 'ok');
+const t0 = Date.now(); const rl = new RateLimiter(20); await rl.wait(); await rl.wait(); await rl.wait(); assert.ok(Date.now() - t0 >= 90);
+console.log('ingest selftest: all assertions passed');
+const md = await import('./mangadex.mjs');
+const r = md.toRecord({ id: 'abc', attributes: { title: { en: 'Solo' }, originalLanguage: 'ko', status: 'completed', tags: [], description: { en: 'd' } }, relationships: [{ type: 'author', attributes: { name: 'Kim' } }] });
+assert.equal(r.format, 'manhwa'); assert.equal(r.status, 'completed'); assert.equal(md.toRecord({ id: 'x', attributes: { title: { en: 'T' }, originalLanguage: 'fr' } }).format, null);
+console.log('mangadex mapping ok');
