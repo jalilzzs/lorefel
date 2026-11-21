@@ -42,11 +42,14 @@ export function qualifyMeta(r) {
 }
 
 export async function fetchChapters(r, limiter) {
-  // 503s are common on www.gutenberg.org/ebooks/N.txt.utf-8; the static cache path is the lighter, documented fallback.
-  let raw;
-  try { raw = await fetchText(r.text_url, limiter); } catch (e) {
-    raw = await fetchText(`https://www.gutenberg.org/cache/epub/${r.external_id}/pg${r.external_id}.txt`, limiter);
+  // Project Gutenberg's policy forbids automated access to www.gutenberg.org (hosted IPs get 503/403).
+  // Bulk text must come from an official mirror. Override with GUTENBERG_MIRRORS="https://a,https://b".
+  const mirrors = (process.env.GUTENBERG_MIRRORS || 'https://aleph.gutenberg.org,https://gutenberg.pglaf.org').split(',').map((m) => m.trim().replace(/\/$/, '')).filter(Boolean);
+  let raw, lastErr;
+  for (const m of mirrors) {
+    try { raw = await fetchText(`${m}/cache/epub/${r.external_id}/pg${r.external_id}.txt`, limiter, { tries: 2 }); break; } catch (e) { lastErr = e; }
   }
+  if (!raw) throw lastErr || new Error('no mirror available');
   const chapters = splitChapters(stripGutenberg(raw));
   return chapters;
 }

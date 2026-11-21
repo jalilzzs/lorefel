@@ -26,14 +26,14 @@ export async function fetchJson(url, limiter, { timeout = 20000 } = {}) {
     return r.json();
   }, { label: url, tries: 5, base: 2500 });
 }
-export async function fetchText(url, limiter, { timeout = 40000 } = {}) {
+export async function fetchText(url, limiter, { timeout = 40000, tries = 5 } = {}) {
   return withRetry(async () => {
     await limiter?.wait();
     const r = await fetch(url, { signal: AbortSignal.timeout(timeout), headers: { 'User-Agent': 'PageLightImporter/1.0 (contact: admin)' } });
     if (r.status === 429 || r.status >= 500) throw new Error(`HTTP ${r.status}`);
     if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.noRetry = true; throw e; }
     return r.text();
-  }, { label: url, tries: 5, base: 2500 });
+  }, { label: url, tries, base: 2500 });
 }
 
 // Run async tasks with bounded concurrency.
