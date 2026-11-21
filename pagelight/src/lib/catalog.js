@@ -150,32 +150,44 @@ export function synopsisOf(t) {
 }
 
 const coverCache = new Map()
-export function coverOf(t) {
-  if (t.cover) return t.cover
+const xmlEsc = (x) => String(x || '').replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]))
+/** Real remote covers only; Gutenberg hot-links are ignored (policy) until re-hosted by the worker. */
+const realCover = (t) => (t.cover && !/gutenberg\.org/i.test(t.cover) ? t.cover : null)
+
+/** Locally drawn book-cover poster (no network, no AI): used when a work has no real cover. Deterministic per title. */
+export function posterOf(t) {
   const key = t.id + ':' + t.title
   if (coverCache.has(key)) return coverCache.get(key)
-  const h1 = t.hue, h2 = (t.hue + 50 + (t.id % 70)) % 360
-  const motif = t.id % 5
-  const words = t.title.split(' ')
+  const hue = Number.isFinite(t.hue) ? t.hue : (t.id * 47) % 360
+  const h1 = hue, h2 = (hue + 40 + (t.id % 60)) % 360
+  const title = String(t.title || '')
+  const rtl = /[֐-ࣿ]/.test(title)
+  const cjk = /[぀-ヿ㐀-鿿가-힯]/.test(title)
   const lines = []
-  let line = ''
-  for (const wd of words) { if ((line + ' ' + wd).trim().length > 13 && line) { lines.push(line); line = wd } else line = (line + ' ' + wd).trim() }
-  if (line) lines.push(line)
-  const L = lines.slice(0, 4)
-  const shapes = [
-    `<circle cx="210" cy="130" r="56" fill="hsl(${h2} 90% 85%)" opacity=".9"/><path d="M0 330 L70 220 L130 290 L200 190 L300 320 V450 H0Z" fill="hsl(${h1} 45% 12%)" opacity=".85"/>`,
-    `<g stroke="hsl(${h2} 90% 80%)" stroke-width="3" opacity=".6">${Array.from({ length: 14 }, (_, k) => `<line x1="150" y1="170" x2="${150 + 260 * Math.cos(k * 0.45)}" y2="${170 + 260 * Math.sin(k * 0.45)}"/>`).join('')}</g><circle cx="150" cy="170" r="42" fill="hsl(${h2} 95% 88%)"/>`,
-    `<path d="M-20 120 L140 -10 L170 20 L10 150Z M80 260 L260 90 L290 120 L110 290Z" fill="hsl(${h2} 85% 75%)" opacity=".75"/><path d="M0 360 L300 250 V450 H0Z" fill="hsl(${h1} 50% 10%)" opacity=".8"/>`,
-    `<g fill="none" stroke="hsl(${h2} 90% 82%)" stroke-width="4" opacity=".7"><circle cx="150" cy="170" r="30"/><circle cx="150" cy="170" r="62"/><circle cx="150" cy="170" r="98"/><circle cx="150" cy="170" r="140"/></g>`,
-    `<rect x="120" y="60" width="60" height="230" fill="hsl(${h1} 45% 10%)" opacity=".85"/><path d="M110 60 L150 10 L190 60Z" fill="hsl(${h1} 45% 10%)"/><circle cx="235" cy="90" r="26" fill="hsl(${h2} 95% 88%)"/>`,
-  ]
-  const fmtLabel = t.format === 'novel' ? 'NOVEL' : t.format.toUpperCase()
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h1} 70% 38%)"/><stop offset="1" stop-color="hsl(${h2} 75% 22%)"/></linearGradient><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset=".45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".75"/></linearGradient></defs><rect width="300" height="450" fill="url(#g)"/>${shapes[motif]}<rect width="300" height="450" fill="url(#s)"/><text x="20" y="36" font-family="Inter,Arial,sans-serif" font-size="11" letter-spacing="3" fill="#fff" opacity=".8" font-weight="700">${fmtLabel}</text>${L.map((s, k) => `<text x="20" y="${450 - 24 - (L.length - 1 - k) * 32}" font-family="Georgia,serif" font-size="28" font-weight="700" fill="#fff">${escapeXml(s)}</text>`).join('')}</svg>`
+  if (cjk) for (let k = 0; k < title.length; k += 7) lines.push(title.slice(k, k + 7))
+  else { let line = ''; for (const wd of title.split(/\s+/)) { if ((line + ' ' + wd).trim().length > (rtl ? 13 : 14) && line) { lines.push(line); line = wd } else line = (line + ' ' + wd).trim() } if (line) lines.push(line) }
+  const L = lines.slice(0, 5)
+  const fs = L.length <= 2 ? 36 : L.length === 3 ? 31 : 26
+  const y0 = 215 - ((L.length - 1) * fs * 1.25) / 2
+  const font = "Georgia,'Times New Roman','Noto Naskh Arabic','Amiri','Traditional Arabic','Noto Serif CJK SC',serif"
+  const dir = rtl ? 'rtl' : 'ltr'
+  const text = L.map((ln, k) => `<text x="150" y="${(y0 + k * fs * 1.25).toFixed(1)}" text-anchor="middle" direction="${dir}" font-family="${font}" font-size="${fs}" font-weight="700" fill="#00000066" transform="translate(1.5 2)">${xmlEsc(ln)}</text><text x="150" y="${(y0 + k * fs * 1.25).toFixed(1)}" text-anchor="middle" direction="${dir}" font-family="${font}" font-size="${fs}" font-weight="700" fill="#fbf3df">${xmlEsc(ln)}</text>`).join('')
+  const motif = [
+    `<circle cx="150" cy="105" r="46" fill="hsl(${h2} 85% 80%)" opacity=".28"/><circle cx="150" cy="105" r="30" fill="none" stroke="hsl(${h2} 85% 85%)" stroke-width="2" opacity=".6"/>`,
+    `<g stroke="hsl(${h2} 85% 82%)" stroke-width="1.4" opacity=".4">${Array.from({ length: 11 }, (_, k) => `<line x1="150" y1="360" x2="${150 + 190 * Math.cos(Math.PI + k * 0.314)}" y2="${360 + 190 * Math.sin(Math.PI + k * 0.314)}"/>`).join('')}</g>`,
+    `<path d="M40 330 Q150 250 260 330 V420 H40Z" fill="hsl(${h1} 50% 12%)" opacity=".55"/><circle cx="215" cy="110" r="22" fill="hsl(${h2} 90% 88%)" opacity=".7"/>`,
+    `<g fill="none" stroke="hsl(${h2} 80% 80%)" stroke-width="1.6" opacity=".45"><circle cx="150" cy="110" r="22"/><circle cx="150" cy="110" r="42"/><circle cx="150" cy="110" r="64"/></g>`,
+    `<path d="M150 50 L172 100 L150 150 L128 100Z" fill="hsl(${h2} 85% 82%)" opacity=".4"/><path d="M60 410 L150 330 L240 410Z" fill="hsl(${h1} 50% 10%)" opacity=".5"/>`,
+  ][(t.id || 0) % 5]
+  const fmt = ({ novel: 'NOVEL', manga: 'MANGA', manhwa: 'MANHWA' })[t.format] || String(t.format || '').toUpperCase()
+  const author = t.author && t.author !== '—' ? xmlEsc(t.author.length > 28 ? t.author.slice(0, 27) + '…' : t.author) : ''
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h1} 62% 34%)"/><stop offset="1" stop-color="hsl(${h2} 68% 17%)"/></linearGradient><linearGradient id="s" x1="0" x2="1"><stop offset="0" stop-color="#000" stop-opacity=".45"/><stop offset=".06" stop-color="#fff" stop-opacity=".16"/><stop offset=".12" stop-color="#000" stop-opacity="0"/></linearGradient><filter id="n"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="${(t.id || 1) % 90}"/><feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .09 0"/></filter></defs><rect width="300" height="450" fill="url(#g)"/>${motif}<rect width="300" height="450" filter="url(#n)"/><rect x="16" y="16" width="268" height="418" fill="none" stroke="hsl(${h2} 55% 78%)" stroke-width="1.6" opacity=".85"/><rect x="23" y="23" width="254" height="404" fill="none" stroke="hsl(${h2} 55% 78%)" stroke-width=".6" opacity=".6"/><text x="150" y="52" text-anchor="middle" font-family="${font}" font-size="11" letter-spacing="4" fill="hsl(${h2} 60% 85%)">${fmt}</text>${text}<path d="M105 ${(y0 + L.length * fs * 1.25 + 4).toFixed(0)} H195" stroke="hsl(${h2} 60% 80%)" stroke-width="1.2" opacity=".8"/><text x="150" y="398" text-anchor="middle" direction="${dir}" font-family="${font}" font-size="15" fill="#fbf3dfcc" letter-spacing=".6">${author}</text><text x="150" y="420" text-anchor="middle" font-family="${font}" font-size="8" letter-spacing="3" fill="hsl(${h2} 50% 80%)" opacity=".7">PAGELIGHT</text><rect width="300" height="450" fill="url(#s)"/></svg>`
   const uri = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg)
   if (coverCache.size > 600) coverCache.clear()
   coverCache.set(key, uri)
   return uri
 }
+export function coverOf(t) { return realCover(t) || posterOf(t) }
 
 function fromRow(r) {
   return {
@@ -399,6 +411,16 @@ export const catalog = {
     if (ch.pages?.length) return { n, name: ch.name, pages: ch.pages }
     if (ch.content) return { n, name: ch.name, paras: ch.content.split(/\n{2,}/).filter(Boolean) }
     return null
+  },
+  /** OCR/quality info for the reader banner (works -> work_sources.raw_meta). */
+  async textQuality(titleId) {
+    if (!isLive || DEMO_MODE) return null
+    try {
+      const { data } = await supabase.from('works').select('work_sources(raw_meta)').eq('title_id', titleId).maybeSingle()
+      const m = data?.work_sources?.[0]?.raw_meta
+      if (!m?.ocr) return null
+      return { quality: m.ocr.quality || 'fair', corrections: m.ocr.corrections || 0 }
+    } catch { return null }
   },
   customChapters(id) { return OVERLAY.chapters[id] || [] },
   async loadCustomChapter(id, n, version = 'official') {

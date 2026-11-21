@@ -42,4 +42,5 @@ export default {
   'feature.disabled': 'Cette fonctionnalité est désactivée.',
   'chapter.missing': 'Chapitre indisponible', 'chapter.error': 'Impossible de charger ce chapitre. Réessayez.',
   'admin.tab.imports': 'Imports',
+  'ocr.notice': 'Texte numérisé par OCR : il peut contenir des erreurs de reconnaissance.', 'ocr.notice.poor': 'Ce scan est difficile à reconnaître automatiquement : attendez-vous à de nombreuses erreurs.',
 }

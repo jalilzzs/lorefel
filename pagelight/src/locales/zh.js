@@ -42,4 +42,5 @@ export default {
   'feature.disabled': '该功能当前已关闭。',
   'chapter.missing': '章节不可用', 'chapter.error': '无法加载本章，请重试。',
   'admin.tab.imports': '导入',
+  'ocr.notice': '本文由扫描件经 OCR 识别而来，可能存在识别错误。', 'ocr.notice.poor': '此扫描件难以自动识别，文中可能有较多错误。',
 }

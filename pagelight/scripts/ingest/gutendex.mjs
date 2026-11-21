@@ -3,12 +3,12 @@ import { fetchJson, fetchText, norm, normAuthor } from './core.mjs';
 import { stripGutenberg, splitChapters } from './text.mjs';
 
 export const SOURCE_ID = 'gutendex';
-const LANG_OK = new Set(['en', 'fr', 'zh']);   // Arabic Gutenberg coverage is tiny; handled if present
+const LANG_OK = new Set(['en', 'fr', 'zh', 'ar']);   // Arabic Gutenberg coverage is tiny; handled if present
 
 export const firstPageUrl = (lang = 'en') => `https://gutendex.com/books/?languages=${lang}&copyright=false&sort=popular`;
 
 export async function listPage(url, limiter) {
-  const j = await fetchJson(url, limiter);
+  const j = await fetchJson(url, limiter, { timeout: 60000 });
   return { next: j.next, items: (j.results || []).map(toRecord) };
 }
 

@@ -4,7 +4,7 @@ import Icon from './Icon'
 import { Modal, Stars, CardSkeletons } from './ui'
 import { useApp } from '../lib/app'
 import { useUD, actions } from '../lib/userdata'
-import { coverOf, synopsisOf, LIST_STATUSES } from '../lib/catalog'
+import { coverOf, posterOf, synopsisOf, LIST_STATUSES } from '../lib/catalog'
 import { chapterParagraphs, pageArt, isComic } from '../lib/content'
 import { cx, fmtNum } from '../lib/util'
 import { toast } from '../lib/toast'
@@ -27,7 +27,7 @@ export function TiltCover({ t, className, big, blocked }) {
   const leave = () => { const el = ref.current; if (el) { el.style.setProperty('--rx', '0deg'); el.style.setProperty('--ry', '0deg') } }
   return (
     <div ref={ref} className={cx('tilt', big && 'big', className)} onPointerMove={move} onPointerLeave={leave}>
-      <img src={coverOf(t)} alt={t.title} loading="lazy" className={cx(blocked && 'blurred')} draggable="false" />
+      <img src={coverOf(t)} alt={t.title} loading="lazy" onError={(e) => { if (!e.currentTarget.dataset.fb) { e.currentTarget.dataset.fb = 1; e.currentTarget.src = posterOf(t) } }} className={cx(blocked && 'blurred')} draggable="false" />
       <div className="sheen" />
       {blocked && <div className="lock"><Icon name="lock" size={28} /><b>18+</b></div>}
     </div>

@@ -5,7 +5,7 @@ import { RateLimiter, pool, withRetry } from './core.mjs';
 import { firstPageUrl, listPage, qualifyMeta, fetchChapters, SOURCE_ID } from './gutendex.mjs';
 
 const arg = (k, d) => (process.argv.find((a) => a.startsWith(`--${k}=`)) || '').split('=')[1] ?? d;
-const LIMIT = Number(arg('limit', 50)), LANG = arg('lang', 'en'), CAMPAIGN = arg('campaign', 'INITIAL_NOVEL_LIBRARY_10000');
+const LIMIT = Number(arg('limit', 50)), LANG = arg('lang', 'en'), CAMPAIGN = arg('campaign', LANG === 'en' ? 'INITIAL_NOVEL_LIBRARY_10000' : `NOVEL_LIBRARY_${LANG.toUpperCase()}`);
 const CONC = Number(arg('concurrency', 2));
 const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) { console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (worker-side only).'); process.exit(1); }

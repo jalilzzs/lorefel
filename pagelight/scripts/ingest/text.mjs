@@ -12,7 +12,7 @@ export function stripGutenberg(raw) {
 
 const ROMAN = '[IVXLCDM]+';
 const HEADING = new RegExp(
-  `^\\s*(?:(?:CHAPTER|Chapter|CHAP\\.|BOOK|Book|PART|Part|LETTER|Letter|STAVE|Stave)\\s+(?:${ROMAN}|\\d+|[A-Z][a-z]+(?:-[a-z]+)?)\\b[.:]?.{0,80}|(?:${ROMAN}|\\d{1,3})\\.\\s*$)\\s*$`);
+  `^\\s*(?:(?:CHAPTER|Chapter|CHAP\\.|BOOK|Book|PART|Part|LETTER|Letter|STAVE|Stave|CHAPITRE|Chapitre|LIVRE|Livre|PARTIE|Partie)\\s+(?:${ROMAN}|\\d+|[A-Z][a-z]+(?:-[a-z]+)?)\\b[.:]?.{0,80}|(?:${ROMAN}|\\d{1,3})\\.\\s*$)\\s*$`);
 
 export function toParagraphs(block) {
   return block.split(/\n\s*\n/).map((p) => p.replace(/\s*\n\s*/g, ' ').replace(/[ \t]+/g, ' ').trim()).filter(Boolean);
@@ -27,7 +27,8 @@ export function splitChapters(text) {
     if (L.length < 90 && HEADING.test(L) && (i === 0 || lines[i - 1].trim() === '') && (lines[i + 1] ?? '').trim() === '') marks.push(i);
   }
   // Table-of-contents guard: drop marks followed by another heading within 6 lines.
-  const real = marks.filter((m, k) => !(marks[k + 1] !== undefined && marks[k + 1] - m < 7));
+  const wc = (from, to) => lines.slice(from, to).join(' ').split(/\s+/).filter(Boolean).length;
+  const real = marks.filter((m, k) => !(marks[k + 1] !== undefined && marks[k + 1] - m < 7 && wc(m + 1, marks[k + 1]) < 30));
   const wordCount = (ps) => ps.reduce((n, p) => n + p.split(/\s+/).length, 0);
   if (real.length < 3) {
     const ps = toParagraphs(text);

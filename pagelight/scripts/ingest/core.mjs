@@ -48,3 +48,14 @@ export const norm = (s = '') => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLo
 export const normAuthor = (s = '') => norm(s.includes(',') ? s.split(',').slice(1).join(' ') + ' ' + s.split(',')[0] : s);
 
 export const LANGS = { en: 'en', fr: 'fr', ar: 'ar', zh: 'zh' };
+
+export async function fetchBuffer(url, limiter, { timeout = 30000 } = {}) {
+  await limiter?.wait();
+  const r = await fetch(url, { signal: AbortSignal.timeout(timeout), headers: { 'User-Agent': 'PageLightImporter/1.0 (contact: admin)' } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const type = r.headers.get('content-type') || '';
+  if (!/^image\//.test(type)) throw new Error('not an image');
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.length < 2000 || buf.length > 3_000_000) throw new Error('bad image size');
+  return { buf, type };
+}

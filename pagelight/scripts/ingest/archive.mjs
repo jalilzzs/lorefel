@@ -1,6 +1,7 @@
 // Internet Archive: ONLY items whose uploader declared a public-domain/CC0 licenseurl. OCR text (djvu), so quality is checked.
 import { fetchJson, fetchText, norm, normAuthor } from './core.mjs';
 import { splitChapters } from './text.mjs';
+import { processOcr } from './ocr.mjs';
 export const id = 'archive';
 export const rps = 0.7;
 export const minWords = 3000;
@@ -16,7 +17,7 @@ export async function list(lang, cursor, limiter) {
     const title = first(d.title) || d.identifier, author = first(d.creator);
     return { source_id: id, external_id: d.identifier, title, title_norm: norm(title), author, author_norm: author ? normAuthor(author) : null, language: lang, subjects: [],
       year: Number(first(d.year)) || null, description: first(d.description) ? String(first(d.description)).slice(0, 1000) : null,
-      licenseurl: first(d.licenseurl), source_url: `https://archive.org/details/${d.identifier}`, license: `Declared on archive.org: ${first(d.licenseurl)}` };
+      licenseurl: first(d.licenseurl), source_url: `https://archive.org/details/${d.identifier}`, cover_url: `https://archive.org/services/img/${d.identifier}`, license: `Declared on archive.org: ${first(d.licenseurl)}` };
   }) };
 }
 export const qualify = (r) => (/publicdomain|cc0|\/zero\//i.test(r.licenseurl || '') ? null : 'license_not_public_domain');
@@ -27,7 +28,9 @@ export async function chapters(r, limiter) {
   if (!f) throw Object.assign(new Error('no_text_file'), { skip: true });
   if (Number(f.size) > 3_000_000) throw Object.assign(new Error('text_too_large'), { skip: true });
   const raw = (await fetchText(`https://archive.org/download/${encodeURIComponent(r.external_id)}/${encodeURIComponent(f.name)}`, limiter, { tries: 3 })).replace(/\r\n?/g, '\n');
-  const nonSpace = raw.replace(/\s/g, '').length || 1, letters = (raw.match(/\p{L}/gu) || []).length;
-  if (letters / nonSpace < 0.75) throw Object.assign(new Error('ocr_quality_low'), { skip: true });
-  return splitChapters(raw.trim());
+  // Poor scans / handwriting are KEPT (flagged), only text with practically no letters is dropped.
+  const { text, report } = processOcr(raw, r.language);
+  r.ocr = report;
+  if (!text) throw Object.assign(new Error('no_readable_text'), { skip: true });
+  return splitChapters(text);
 }

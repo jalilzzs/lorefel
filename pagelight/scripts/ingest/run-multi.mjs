@@ -6,6 +6,7 @@ import { RateLimiter, pool, withRetry } from './core.mjs';
 import * as wikisource from './wikisource.mjs';
 import * as archive from './archive.mjs';
 import * as gutenberg from './gutenberg-adapter.mjs';
+import { uploadCover, backfillCovers } from './covers.mjs';
 
 const ALL = { wikisource, archive, gutendex: gutenberg };
 const TARGET = Number(process.env.CYCLE_TARGET || 400), MAX_MIN = Number(process.env.CYCLE_MAX_MIN || 90);
@@ -33,7 +34,7 @@ async function send(a, r, chs) {
   let out = null, c = 0, p = 0;
   for (let g = 0; g < groups.length; g++) {
     const res = await withRetry(async () => {
-      const { data, error } = await db.rpc('import_work', { p: { ...r, raw_meta: { source: a.id, ocr: a.id === 'archive' }, chapters: groups[g], append: g > 0, final: g === groups.length - 1 } });
+      const { data, error } = await db.rpc('import_work', { p: { ...r, raw_meta: { source: a.id, ocr: a.id === 'archive' ? (r.ocr || true) : false }, chapters: groups[g], append: g > 0, final: g === groups.length - 1 } });
       if (error) throw error; return data;
     }, { tries: 4, base: 1500, label: 'rpc' });
     if (res.status !== 'imported') return res;
@@ -47,12 +48,12 @@ async function runSource(a, lang, want) {
   const skip = (why) => { s.skipped[why] = (s.skipped[why] || 0) + 1; };
   const job = await getJob(a, lang);
   if (job.status === 'done') { s.status = 'exhausted'; return s; }
-  let cursor = job.cursor && Object.keys(job.cursor).length ? job.cursor : null, attempts = 0, consecFail = 0;
+  let cursor = job.cursor && Object.keys(job.cursor).length ? job.cursor : {}, attempts = 0, consecFail = 0;   // {} = start of the source
   const maxAttempts = want * 5;
   try {
     while (s.imported < want && attempts < maxAttempts && Date.now() < deadline) {
-      const page = await a.list(lang, cursor, lim(a));
-      if (!page.items.length && !page.next) { cursor = null; await db.from('import_jobs').update({ status: 'done', finished_at: new Date().toISOString() }).eq('id', job.id); s.status = 'exhausted'; break; }
+      const page = await a.list(lang, Object.keys(cursor).length ? cursor : null, lim(a));
+      if (!page.items.length && !page.next) { await db.from('import_jobs').update({ status: 'done', finished_at: new Date().toISOString() }).eq('id', job.id); s.status = 'exhausted'; break; }
       s.found += page.items.length;
       let pageDone = true;
       await pool(page.items, 2, async (r) => {
@@ -65,6 +66,7 @@ async function runSource(a, lang, want) {
           const chs = (await a.chapters(r, lim(a))).map((c) => ({ ...c, words: c.paragraphs.join(' ').split(/\s+/).length }));
           const words = chs.reduce((n, c) => n + c.words, 0);
           if (!chs.length || words < a.minWords) return skip('too_short_or_empty');
+          if (a.cover) { try { const img = await a.cover(r, lim(a)); if (img) r.cover_url = await uploadCover(db, a.id, r.external_id, img); } catch { /* generated poster is used */ } }
           const res = await send(a, r, chs);
           if (res.status === 'imported') { s.imported++; s.chapters += res.chapters; s.paragraphs += res.paragraphs; consecFail = 0; await log(job, 'info', r.external_id, 'imported', res); }
           else skip(res.status === 'duplicate' ? 'duplicate_work' : res.reason || res.status);
@@ -74,10 +76,11 @@ async function runSource(a, lang, want) {
         }
       });
       if (consecFail >= 8) throw new Error(`source unhealthy: ${consecFail} consecutive failures`);
-      if (pageDone) cursor = page.next;           // advance only past fully processed pages
-      await db.from('import_jobs').update({ cursor: cursor || {}, status: cursor === null ? 'done' : 'running', discovered: job.discovered + s.found, qualified: job.qualified + s.imported,
+      const finished = pageDone && page.next === null;     // exhausted only when the LAST page was fully processed
+      if (pageDone && !finished) cursor = page.next;       // advance only past fully processed pages
+      await db.from('import_jobs').update({ cursor, status: finished ? 'done' : 'running', discovered: job.discovered + s.found, qualified: job.qualified + s.imported,
         chapters_imported: job.chapters_imported + s.chapters, paragraphs_imported: job.paragraphs_imported + s.paragraphs, failed: job.failed + s.failed, heartbeat_at: new Date().toISOString() }).eq('id', job.id);
-      if (cursor === null) { s.status = 'exhausted'; break; }
+      if (finished) { s.status = 'exhausted'; break; }
     }
     await db.from('content_sources').update({ last_tested_at: new Date().toISOString(), last_test_ok: true, last_error: null }).eq('id', a.id);
   } catch (e) {
@@ -100,6 +103,7 @@ for (const lang of LANGS) {
   }
   carry = Math.max(0, left);       // unmet quota rolls to the next language (so the cycle still approaches the target)
 }
+let covers = null; try { covers = await backfillCovers(db, 60); console.log('COVERS', JSON.stringify(covers)); } catch (e) { console.log('covers skipped:', e.message); }
 const tot = report.reduce((t, s) => ({ imported: t.imported + s.imported, chapters: t.chapters + s.chapters, paragraphs: t.paragraphs + s.paragraphs, failed: t.failed + s.failed }), { imported: 0, chapters: 0, paragraphs: 0, failed: 0 });
 console.log('CYCLE SUMMARY', JSON.stringify({ target: TARGET, ...tot, skippedSources: report.filter((s) => s.status === 'SKIPPED').map((s) => `${s.source}/${s.lang}`) }));
-await log(null, 'info', null, 'cycle summary', { target: TARGET, ...tot, report });
+await log(null, 'info', null, 'cycle summary', { target: TARGET, ...tot, covers, report });

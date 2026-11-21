@@ -34,3 +34,15 @@ assert.equal(ar.qualify({ licenseurl: 'http://creativecommons.org/publicdomain/m
 assert.equal(ar.qualify({ licenseurl: 'https://creativecommons.org/licenses/by-nc/4.0/' }), 'license_not_public_domain');
 assert.equal(ar.qualify({}), 'license_not_public_domain');
 console.log('html/archive ok');
+const ocr = await import('./ocr.mjs');
+const base = ('مدرسة جميلة كبيرة في المدينة القديمة ').repeat(12);
+const arTxt = base + 'ذهب الطالب الى مدرشة الحي. ' + base + 'قرأ الكتاب الجديد. ' + base;
+const fixed = ocr.correctText(arTxt);
+assert.ok(fixed.text.includes('الى مدرسة الحي') && fixed.corrections >= 1, 'arabic confusion fix');
+const en = ('mother father brother sister ').repeat(10) + 'and rnother came ' + ('mother ').repeat(3) + 'zxqvk';
+const fe = ocr.correctText(en); assert.ok(fe.text.includes('and mother came'), 'rn->m'); assert.ok(fe.text.includes('zxqvk'), 'unknown word untouched');
+assert.ok(!ocr.correctText('Paris Paris Paris Paris Paris Parls x').text.includes('Parls Paris'.replace('Parls','Pari1')), 'sanity');
+const cl = ocr.cleanText('Chapitre\n\n12\n\n------\n\nUne phrase nor-\nmale ici.\n', 'fr'); assert.ok(cl.includes('normale') && !/^12$/m.test(cl));
+const bad = ocr.processOcr('~~ ^^ __ ##\n'.repeat(300), 'en'); assert.equal(bad.text, null);
+const ok = ocr.processOcr((base + '\n\n').repeat(40), 'ar'); assert.ok(ok.text && ['good', 'fair', 'poor'].includes(ok.report.quality));
+console.log('ocr ok', ok.report.quality);

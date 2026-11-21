@@ -42,6 +42,7 @@ export default function Reader() {
   const blocked = title ? !canView(title) : false
   const { data: chap, loading } = useAsync(() => (title && !blocked ? loadChapter(title, n, version) : null), [title?.id, n, version, blocked])
   useDocTitle(title ? `${title.title} · ${t('chapter')} ${n}` : t('reader'), title?.title)
+  const { data: tq } = useAsync(() => (title ? catalog.textQuality(title.id) : null), [title?.id])
 
   const comic = title ? isComic(title) : false
   const paras = chap?.paras || []
@@ -239,6 +240,7 @@ export default function Reader() {
       {settings && <ReaderSettings title={title} comic={comic} tts={tts} auto={auto} setAuto={setAuto} onClose={() => setSettings(false)} applyPreset={applyPreset} openMix={() => setMix(true)} />}
 
       <article className={cx('reader-body', comic ? 'comic' : 'novel')} dir={comic ? 'ltr' : dir}>
+        {tq && <div className="recap glass pad" role="note"><small>{t(tq.quality === 'poor' ? 'ocr.notice.poor' : 'ocr.notice')}</small></div>}
         {chap?.offline && <span className="pill soft"><Icon name="download" size={12} />{t('offline.available')}</span>}
         {recapOpen && !comic && <div className="recap glass pad"><div className="row between"><b><Icon name="sparkles" size={14} /> {t('previously')}</b><button className="icon-btn sm" onClick={() => setRecapOpen(false)} aria-label="close"><Icon name="x" size={13} /></button></div><ul>{recap(title, n - 1).map((r, i) => <li key={i}>{r}</li>)}</ul></div>}
         <header className="chapter-head"><small className="muted">{t('chapter')} {n}</small><h1 className="serif">{chap?.name || chapterTitle(title, n)}</h1><small className="muted">{chapterMinutes(title, n, wpm)} {t('min')}</small></header>

@@ -23,8 +23,9 @@ export async function list(lang, cursor, limiter) {
     const nextCont = j.continue?.cmcontinue || null;
     const next = nextCont ? { ci, cont: nextCont } : (ci + 1 < cl.length ? { ci: ci + 1, cont: null } : null);
     if (members.length || next === null) {
+      const thumbs = await pageImages(lang, members.map((m) => m.title).filter((t) => !t.includes('/')), limiter);
       return { next, items: members.filter((m) => !m.title.includes('/')).map((m) => ({
-        source_id: id, external_id: `${lang}:${m.title}`, title: m.title, title_norm: norm(m.title), author: null, author_norm: null, language: lang,
+        source_id: id, external_id: `${lang}:${m.title}`, title: m.title, title_norm: norm(m.title), author: null, author_norm: null, language: lang, cover_url: thumbs[m.title] || null,
         subjects: [], source_url: `https://${lang}.wikisource.org/wiki/${encodeURIComponent(m.title.replace(/ /g, '_'))}`, license: 'Wikisource (public domain / CC BY-SA)', wsTitle: m.title })) };
     }
     ci++; cont = null;   // empty category (name may not exist on this wiki): move on
@@ -32,6 +33,18 @@ export async function list(lang, cursor, limiter) {
   return { next: null, items: [] };
 }
 export const qualify = () => null;
+
+// Real poster/thumbnail from Wikimedia when the work page has an image (best effort, failures ignored).
+async function pageImages(lang, titles, limiter) {
+  const out = {};
+  try {
+    if (!titles.length) return out;
+    const j = await fetchJson(`${api(lang)}?action=query&prop=pageimages&piprop=thumbnail&pithumbsize=400&titles=${encodeURIComponent(titles.join('|'))}&format=json&formatversion=2&origin=*`, limiter);
+    for (const p of j.query?.pages || []) if (p.thumbnail?.source) out[p.title] = p.thumbnail.source;
+  } catch { /* no covers this time */ }
+  return out;
+}
+export { pageImages };
 
 const parse = (lang, page, limiter) => fetchJson(`${api(lang)}?action=parse&page=${encodeURIComponent(page)}&prop=text|links&redirects=1&disableeditsection=1&format=json&formatversion=2&origin=*`, limiter);
 

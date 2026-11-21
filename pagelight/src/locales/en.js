@@ -94,4 +94,5 @@ export default {
   'admin.rec.weights': 'Recommendation weights', 'w.genre': 'Genre affinity', 'w.format': 'Format affinity', 'w.rating': 'Quality (rating)', 'w.velocity': 'Trending velocity', 'w.tag': 'Tag similarity', 'w.completion': 'Completion match',
   'admin.reports': 'Moderation queue', 'admin.hide.remove': 'Hide content', 'admin.dismiss': 'Dismiss',
   'admin.tab.imports': 'Imports',
+  'ocr.notice': 'Text digitised from a scan (OCR): it may contain recognition errors.', 'ocr.notice.poor': 'This scan is hard to read automatically: expect many recognition errors.',
 }
