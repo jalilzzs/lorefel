@@ -20,3 +20,17 @@ const md = await import('./mangadex.mjs');
 const r = md.toRecord({ id: 'abc', attributes: { title: { en: 'Solo' }, originalLanguage: 'ko', status: 'completed', tags: [], description: { en: 'd' } }, relationships: [{ type: 'author', attributes: { name: 'Kim' } }] });
 assert.equal(r.format, 'manhwa'); assert.equal(r.status, 'completed'); assert.equal(md.toRecord({ id: 'x', attributes: { title: { en: 'T' }, originalLanguage: 'fr' } }).format, null);
 console.log('mangadex mapping ok');
+
+const fr = (n) => ('Une phrase du chapitre. '.repeat(12) + '\n\nDeuxieme paragraphe ici. ' + 'mot '.repeat(30));
+const frTxt = `CHAPITRE I\n\n${fr()}\n\nCHAPITRE II\n\n${fr()}\n\nCHAPITRE III\n\n${fr()}`;
+assert.equal(splitChapters(frTxt).length, 3);
+assert.equal(qualifyMeta({ ...rec, language: 'ar' }), null);
+console.log('fr/ar ok');
+const { htmlToParagraphs, decode } = await import('./html.mjs');
+const ps = htmlToParagraphs('<div class="navbox"><table><tr><td><p>nav</p></td></tr></table></div><p>مرحبا &amp; <b>أهلاً</b><sup class="r">[1]</sup> بالعالم</p><style>p{}</style><p>Second&nbsp;one &#8217;x</p><p> </p>');
+assert.deepEqual(ps, ['مرحبا & أهلاً بالعالم', 'Second one ’x']);
+const ar = await import('./archive.mjs');
+assert.equal(ar.qualify({ licenseurl: 'http://creativecommons.org/publicdomain/mark/1.0/' }), null);
+assert.equal(ar.qualify({ licenseurl: 'https://creativecommons.org/licenses/by-nc/4.0/' }), 'license_not_public_domain');
+assert.equal(ar.qualify({}), 'license_not_public_domain');
+console.log('html/archive ok');
