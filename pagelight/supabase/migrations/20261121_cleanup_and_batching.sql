@@ -6,7 +6,7 @@
 -- =====================================================================
 delete from public.chapters
  where not is_real and (
-   array_to_string(pages, ' ') ilike '%placehold.co%'
+   pages::text ilike '%placehold.co%'
    or content like 'The rain tapped steadily against the narrow window of the archive%');
 
 update public.titles t set chapter_count = coalesce((select count(*) from public.chapters c where c.title_id = t.id), 0);
