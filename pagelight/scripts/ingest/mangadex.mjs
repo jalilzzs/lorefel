@@ -22,18 +22,41 @@ export function toRecord(m, lang = 'en') {
   };
 }
 
-/** first `max` integer-numbered chapters that MangaDex itself hosts. */
-export async function fetchChapters(r, limiter, { max = 5 } = {}) {
-  const feed = await fetchJson(`${API}/manga/${r.external_id}/feed?translatedLanguage[]=${r.language}&limit=100&order[chapter]=asc&includeExternalUrl=0&contentRating[]=safe`, limiter);
+/** Chapter LIST only (nothing is downloaded or stored): integer-numbered chapters hosted by MangaDex itself.
+ *  The first chapter is verified through the at-home server (real pages exist); the rest rely on MangaDex's own page count. */
+export async function fetchChapters(r, limiter, { max = 200 } = {}) {
+  const feed = await fetchJson(`${API}/manga/${r.external_id}/feed?translatedLanguage[]=${r.language}&limit=500&order[chapter]=asc&includeExternalUrl=0&contentRating[]=safe`, limiter);
   const out = [], seen = new Set();
   for (const c of feed.data || []) {
     const a = c.attributes, n = Number(a.chapter);
     if (!Number.isInteger(n) || n < 1 || seen.has(n) || !a.pages || a.externalUrl) continue;
-    const srv = await fetchJson(`${API}/at-home/server/${c.id}`, limiter);
-    const pages = (srv.chapter?.data || []).map((f) => `${srv.baseUrl}/data/${srv.chapter.hash}/${f}`);
-    if (!pages.length) continue;
-    seen.add(n); out.push({ number: n, name: a.title || null, pages });
+    if (!out.length) {   // verify that the first chapter really serves pages right now
+      const srv = await fetchJson(`${API}/at-home/server/${c.id}`, limiter);
+      if (!(srv.chapter?.data || []).length) continue;
+    }
+    seen.add(n); out.push({ number: n, name: a.title || null, page_count: a.pages, ref: { u: c.id } });
     if (out.length >= max) break;
   }
   return out;
+}
+
+/** Provider rating (MangaDex community, 0..10 -> 0..5). Returns null when MangaDex has none. */
+export async function fetchStats(ids, limiter) {
+  const out = {};
+  if (!ids.length) return out;
+  try {
+    const j = await fetchJson(`${API}/statistics/manga?${ids.map((i) => `manga[]=${i}`).join('&')}`, limiter);
+    for (const [id, s] of Object.entries(j.statistics || {})) {
+      const v = s.rating?.bayesian ?? s.rating?.average;
+      const dist = s.rating?.distribution ? Object.values(s.rating.distribution).reduce((n, x) => n + x, 0) : 0;
+      if (v) out[id] = { rating: Math.round((v / 2) * 100) / 100, rating_count: dist, rating_source: 'MangaDex' };
+    }
+  } catch { /* ratings are optional */ }
+  return out;
+}
+
+/** Reader: page image URLs fetched at reading time (at-home URLs are short-lived, so they must not be stored). */
+export async function readPages(chapterUuid, limiter) {
+  const srv = await fetchJson(`${API}/at-home/server/${chapterUuid}`, limiter);
+  return (srv.chapter?.data || []).map((f) => `${srv.baseUrl}/data/${srv.chapter.hash}/${f}`);
 }

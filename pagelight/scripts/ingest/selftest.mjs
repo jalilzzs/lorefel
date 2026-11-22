@@ -46,3 +46,24 @@ const cl = ocr.cleanText('Chapitre\n\n12\n\n------\n\nUne phrase nor-\nmale ici.
 const bad = ocr.processOcr('~~ ^^ __ ##\n'.repeat(300), 'en'); assert.equal(bad.text, null);
 const ok = ocr.processOcr((base + '\n\n').repeat(40), 'ar'); assert.ok(ok.text && ['good', 'fair', 'poor'].includes(ok.report.quality));
 console.log('ocr ok', ok.report.quality);
+
+// reader (on-demand chapters, nothing stored) + enrichment matching
+{
+  const B = () => ('Une phrase du chapitre. '.repeat(12) + '\n\nDeuxieme paragraphe ici. ' + 'mot '.repeat(30));
+  const book = `*** START OF THE PROJECT GUTENBERG EBOOK X ***\n\nCHAPITRE I\n\n${B()}\n\nCHAPITRE II\n\n${B()}\n\nCHAPITRE III\n\n${B()}\n*** END OF THE PROJECT GUTENBERG EBOOK X ***`;
+  const realFetch = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async (u) => { calls++; return String(u).includes('pg42.txt') ? new Response(book, { status: 200 }) : new Response('x', { status: 404 }); };
+  const rows = { '1:2': { id: 9, name: 'CHAPITRE II', number: 2, is_real: true, source_id: 'gutendex', work_id: 5 } };
+  const works = { 5: { language: 'fr', work_sources: [{ source_id: 'gutendex', external_id: '42' }] } };
+  const db = { from: (t) => { const f = {}; const q = { select: () => q, eq: (k, v) => { f[k] = v; return q; }, maybeSingle: async () => ({ data: t === 'chapters' ? rows[`${f.title_id}:${f.number}`] ?? null : works[f.id] ?? null, error: null }) }; return q; } };
+  const { readChapter } = await import('./reader.mjs');
+  const a = await readChapter(db, 1, 2); assert.equal(a.paras.length, 2);
+  const c = calls; await readChapter(db, 1, 2); assert.equal(calls, c, 'cached');
+  assert.equal(await readChapter(db, 1, 3), null);
+  globalThis.fetch = realFetch;
+  const { pickOpenLibrary, pickJikan } = await import('./enrich.mjs');
+  const w1 = { title_norm: 'les miserables', author_norm: 'victor hugo' };
+  assert.ok(pickOpenLibrary(w1, [{ title: 'Les Misérables', author_name: ['Victor Hugo'] }])); assert.equal(pickOpenLibrary(w1, [{ title: 'Les Misérables', author_name: ['X'] }]), null);
+  assert.ok(pickJikan({ title_norm: 'solo leveling' }, [{ title: 'A', title_english: 'Solo Leveling' }])); assert.equal(pickJikan({ title_norm: 'solo leveling' }, [{ title: 'B' }]), null);
+  console.log('reader/enrich ok');
+}

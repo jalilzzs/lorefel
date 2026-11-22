@@ -34,3 +34,5 @@ export async function chapters(r, limiter) {
   if (!text) throw Object.assign(new Error('no_readable_text'), { skip: true });
   return splitChapters(text);
 }
+export const readBook = (r, limiter) => chapters(r, limiter);
+export const recordFromSource = (ws, lang) => ({ external_id: ws.external_id, language: lang });

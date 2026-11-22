@@ -1,9 +1,9 @@
-// Usage: node scripts/ingest/run-comics.mjs [--limit=20] [--chapters=5]   (service-role key, worker-side only)
+// Usage: node scripts/ingest/run-comics.mjs [--limit=20] [--chapters=200]   (stores the chapter LIST only; pages are fetched at reading time)   (service-role key, worker-side only)
 import { createClient } from '@supabase/supabase-js';
 import { RateLimiter, fetchJson } from './core.mjs';
-import { listUrl, toRecord, fetchChapters, SOURCE_ID } from './mangadex.mjs';
+import { listUrl, toRecord, fetchChapters, fetchStats, SOURCE_ID } from './mangadex.mjs';
 const arg = (k, d) => (process.argv.find((a) => a.startsWith(`--${k}=`)) || '').split('=')[1] ?? d;
-const LIMIT = Number(arg('limit', 20)), CH = Number(arg('chapters', 5)), CAMPAIGN = 'COMIC_LIBRARY_MANGADEX';
+const LIMIT = Number(arg('limit', 20)), CH = Number(arg('chapters', process.env.COMIC_MAX_CHAPTERS || 200)), CAMPAIGN = 'COMIC_LIBRARY_MANGADEX';
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const lim = new RateLimiter(0.5);
 let { data: job } = await db.from('import_jobs').select('*').eq('campaign', CAMPAIGN).in('status', ['queued', 'running', 'paused']).order('id', { ascending: false }).limit(1).maybeSingle();
@@ -13,9 +13,10 @@ let offset = job.cursor?.offset || 0, done = 0, more = true;
 while (more && done < LIMIT) {
   const page = await fetchJson(listUrl(offset), lim);
   more = (page.data || []).length === 50; offset += 50;
+  const stats = await fetchStats((page.data || []).map((m) => m.id), lim);
   for (const m of page.data || []) {
     if (done >= LIMIT) break; c.discovered++;
-    const r = toRecord(m); if (!r.format || !r.title) { c.skipped++; continue; }
+    const r = { ...toRecord(m), ...(stats[m.id] || {}) }; if (!r.format || !r.title) { c.skipped++; continue; }
     c.verified++; done++;
     try {
       const chapters = await fetchChapters(r, lim, { max: CH });

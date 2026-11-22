@@ -9,6 +9,9 @@ export async function list(lang, cursor, limiter) {
 }
 export const qualify = qualifyMeta;
 export const chapters = fetchChapters;
+// Reader: same download + same splitter as at import time, so chapter numbers always match. Cached by the reader.
+export const readBook = (r, limiter) => fetchChapters(r, limiter);
+export const recordFromSource = (ws, lang) => ({ external_id: ws.external_id, language: lang });
 
 // Cover is fetched from an official MIRROR (never hot-linked from www.gutenberg.org) and re-hosted in our own storage.
 export async function cover(r, limiter) {

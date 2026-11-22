@@ -3,7 +3,7 @@
 import { fetchJson, norm } from './core.mjs';
 import { htmlToParagraphs, countWords } from './html.mjs';
 export const id = 'wikisource';
-export const rps = 2;
+export const rps = 1;   // Wikimedia asks for polite, mostly serial API use
 export const minWords = 1500;
 const DEFAULT_CATS = {
   ar: ['تصنيف:روايات', 'تصنيف:قصص'],
@@ -46,7 +46,7 @@ async function pageImages(lang, titles, limiter) {
 }
 export { pageImages };
 
-const parse = (lang, page, limiter) => fetchJson(`${api(lang)}?action=parse&page=${encodeURIComponent(page)}&prop=text|links&redirects=1&disableeditsection=1&format=json&formatversion=2&origin=*`, limiter);
+const parse = (lang, page, limiter) => fetchJson(`${api(lang)}?action=parse&page=${encodeURIComponent(page)}&prop=text|links&redirects=1&disableeditsection=1&format=json&formatversion=2&origin=*`, limiter, { timeout: 60000 });
 
 export async function chapters(r, limiter) {
   const lang = r.language;
@@ -56,10 +56,19 @@ export async function chapters(r, limiter) {
     const out = [];
     for (const s of subs) {
       const ps = htmlToParagraphs((await parse(lang, s, limiter)).parse?.text);
-      if (countWords(ps) >= 50) out.push({ number: out.length + 1, name: s.split('/').pop(), paragraphs: ps, split_method: 'source_subpages' });
+      if (countWords(ps) >= 50) out.push({ number: out.length + 1, name: s.split('/').pop(), paragraphs: ps, split_method: 'source_subpages', ref: { page: s } });
     }
     return out;
   }
   const ps = htmlToParagraphs(main.parse?.text);
-  return ps.length ? [{ number: 1, name: null, paragraphs: ps, split_method: 'single_section' }] : [];
+  return ps.length ? [{ number: 1, name: null, paragraphs: ps, split_method: 'single_section', ref: { page: r.wsTitle } }] : [];
 }
+
+/** Reader: fetch ONE chapter on demand (nothing is stored). r = { language, wsTitle }, ref = { page } */
+export async function readChapter(r, ch, limiter) {
+  const page = ch.ref?.page || r.wsTitle;
+  const ps = htmlToParagraphs((await parse(r.language, page, limiter)).parse?.text);
+  return { paragraphs: ps };
+}
+// Rebuild the adapter record from stored work_sources (external_id = '<lang>:<title>')
+export const recordFromSource = (ws, lang) => { const i = ws.external_id.indexOf(':'); return { language: ws.external_id.slice(0, i) || lang, wsTitle: ws.external_id.slice(i + 1), external_id: ws.external_id }; };

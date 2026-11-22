@@ -3,6 +3,7 @@
 import { mulberry32, lsGet, lsSet, escapeXml, hash } from './util'
 import { isLive, supabase, DEMO_MODE } from './supabase'
 import { importFromSources, SOURCES } from './sources'
+const READER_API = (import.meta.env.VITE_READER_API || '').replace(/\/$/, '')
 
 export const CATALOG_SIZE = 100000
 export const GENRES = ['action', 'fantasy', 'romance', 'thriller', 'mystery', 'scifi', 'historical', 'sliceoflife', 'horror', 'drama', 'wuxia', 'xianxia', 'litrpg', 'psychological', 'comedy', 'sports', 'supernatural', 'isekai', 'adventure', 'school', 'mecha', 'tragedy']
@@ -108,7 +109,10 @@ function applyOverlay() {
   }
 }
 
+let POOL = null            // production: REAL titles loaded from Supabase (the procedural generator is demo-only)
+const cachePut = (t) => { if (DEMO_MODE || !t || BYID.has(t.id)) return; BYID.set(t.id, t); (POOL ||= []).push(t); ORDERS = {} }
 function ensure() {
+  if (!DEMO_MODE) return POOL || (POOL = [])
   if (ALL) return ALL
   ALL = new Array(CATALOG_SIZE)
   for (let i = 1; i <= CATALOG_SIZE; i++) ALL[i - 1] = gen(i)
@@ -122,6 +126,7 @@ function ensure() {
 }
 function byId(id) {
   ensure()
+  if (!DEMO_MODE) return BYID.get(Number(id))
   if (id >= 1 && id <= CATALOG_SIZE) return ALL[id - 1]
   return BYID.get(id)
 }
@@ -130,7 +135,7 @@ const bayes = (t) => (t.rating * t.votes + 3.6 * 80) / (t.votes + 80)
 function order(sort) {
   ensure()
   if (!ORDERS[sort]) {
-    const a = ALL.slice()
+    const a = ensure().slice()
     const cmp = {
       popular: (x, y) => popScore(y) - popScore(x),
       rating: (x, y) => bayes(y) - bayes(x),
@@ -289,6 +294,28 @@ export const catalog = {
   local: (id) => byId(id),
   allLocal: () => ensure(),
 
+  /** Production: load real titles (and any ids the user needs) into the in-memory pool used by recommenders/library views. Resolves true if something new was loaded. */
+  async ready(extraIds = []) {
+    if (DEMO_MODE || !isLive) return false
+    let changed = false
+    try {
+      if (!catalog._poolLoaded) {
+        catalog._poolLoaded = true
+        for (let from = 0; from < 1000; from += 500) {
+          const { data } = await supabase.from('titles').select('*').gt('chapter_count', 0).order('updated_at', { ascending: false }).range(from, from + 499)
+          for (const r of data || []) { const n = BYID.size; cachePut(fromRow(r)); if (BYID.size > n) changed = true }
+          if (!data || data.length < 500) break
+        }
+      }
+      const missing = [...new Set(extraIds.map(Number))].filter((i) => i && !BYID.has(i))
+      for (let i = 0; i < missing.length; i += 100) {
+        const { data } = await supabase.from('titles').select('*').in('id', missing.slice(i, i + 100))
+        for (const r of data || []) { cachePut(fromRow(r)); changed = true }
+      }
+    } catch (e) { console.warn('[catalog] ready failed', e) }
+    return changed
+  },
+
   async query(params = {}) {
     const p = { sort: 'popular', page: 1, pageSize: 24, ...params }
     if (isLive) {
@@ -320,7 +347,7 @@ export const catalog = {
     if (isLive) {
       try {
         const { data } = await supabase.from('titles').select('*').eq('id', id).maybeSingle()
-        if (data) return fromRow(data)
+        if (data) { const t = fromRow(data); cachePut(t); return t }
       } catch { /* fallback */ }
       if (!DEMO_MODE) return null
     }
@@ -378,33 +405,28 @@ export const catalog = {
 
   async importExternal(sourceIds, opts = {}) {
     ensure()
-    const existing = new Set(ALL.map((t) => `${t.tl}::${t.format}`))
+    const existing = new Set(ensure().map((t) => `${t.tl}::${t.format}`))
     const { items, report } = await importFromSources(sourceIds, { ...opts, existingTitles: existing })
     const imported = await adminCatalog.importMany(items)
     invalidate()
     return { imported, report }
   },
 
-  /** Real content only: chapters + chapter_paragraphs / chapter_pages from Supabase. */
+  /** Real content only. The database holds just the chapter LIST; the text / page images are fetched from the original
+   *  source at reading time through the reader API (VITE_READER_API). Nothing is generated and nothing is stored. */
   async loadRealChapter(id, n, version = 'official') {
-    const { data: ch, error } = await supabase.from('chapters').select('id,name,is_real,paragraph_count,page_count,content,pages')
+    const { data: ch, error } = await supabase.from('chapters').select('id,name,is_real,content,pages')
       .eq('title_id', id).eq('number', n).eq('version', version).maybeSingle()
     if (error) throw error
     if (!ch) return null
     if (ch.is_real) {
-      // PostgREST caps responses (default 1000 rows): page through paragraphs so long chapters are never truncated.
-      const pp = { data: [], error: null }
-      for (let from = 0; from < 20000; from += 1000) {
-        const r = await supabase.from('chapter_paragraphs').select('idx,text').eq('chapter_id', ch.id).order('idx', { ascending: true }).range(from, from + 999)
-        if (r.error) { pp.error = r.error; break }
-        pp.data.push(...r.data)
-        if (r.data.length < 1000) break
-      }
-      const pg = pp.data.length ? { data: [], error: null } : await supabase.from('chapter_pages').select('idx,image_url').eq('chapter_id', ch.id).order('idx', { ascending: true }).range(0, 999)
-      if (pp.error) throw pp.error
-      if (pg.error) throw pg.error
-      if (pp.data?.length) return { n, name: ch.name, paras: pp.data.map((r) => r.text) }
-      if (pg.data?.length) return { n, name: ch.name, pages: pg.data.map((r) => r.image_url) }
+      if (!READER_API) throw new Error('VITE_READER_API is not configured')
+      const r = await fetch(`${READER_API}/api/chapter?title=${id}&n=${n}&v=${encodeURIComponent(version)}`)
+      if (r.status === 404) return null
+      if (!r.ok) throw new Error(`reader API ${r.status}`)
+      const j = await r.json()
+      if (j.paras?.length) return { n, name: j.name || ch.name, paras: j.paras }
+      if (j.pages?.length) return { n, name: j.name || ch.name, pages: j.pages }
       return null
     }
     // legacy admin-authored chapter (kept for existing data)
@@ -452,14 +474,14 @@ export const adminCatalog = {
         .single()
       if (error) throw error
       const mapped = fromRow(row)
-      ALL.push(mapped)
+      ensure().push(mapped)
       BYID.set(mapped.id, mapped)
       invalidate()
       return mapped
     }
     const id = Math.max(CATALOG_SIZE, ...OVERLAY.extras.map((e) => e.id)) + 1
     const t = { votes: 0, rating: 4, velocity: 30, updatedDays: 0, hue: id % 360, pa: 0, sa: 0, sb: 0, sc: 0, origin: 'US', cover: null, ...data, tags: mergedTags, id }
-    OVERLAY.extras.push(t); const tt = { ...t, tl: t.title.toLowerCase() }; ALL.push(tt); BYID.set(id, tt)
+    OVERLAY.extras.push(t); const tt = { ...t, tl: t.title.toLowerCase() }; ensure().push(tt); BYID.set(id, tt)
     invalidate(); saveOverlay(); return tt
   },
   async update(id, patch) {
@@ -503,7 +525,7 @@ export const adminCatalog = {
         if (!error && rows?.length) {
           for (const r of rows) {
             const mapped = fromRow(r)
-            ALL.push(mapped)
+            ensure().push(mapped)
             BYID.set(mapped.id, mapped)
           }
           totalSaved += rows.length

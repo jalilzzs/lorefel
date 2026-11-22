@@ -1,4 +1,4 @@
-// Multi-source novel importer. One cycle = a quota of works spread over languages (Arabic first) and sources.
+// Multi-source novel importer (metadata only: no chapter text is written to the database). One cycle = a quota of works spread over languages (Arabic first) and sources.
 // A source that errors out is SKIPPED for the cycle (logged, flagged in content_sources); the others continue.
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CYCLE_TARGET=400, CYCLE_MAX_MIN=90, WORKER_LANGS=ar,fr,zh,en, SOURCES=wikisource,archive,gutendex
 import { createClient } from '@supabase/supabase-js';
@@ -10,7 +10,7 @@ import { uploadCover, backfillCovers } from './covers.mjs';
 
 const ALL = { wikisource, archive, gutendex: gutenberg };
 const TARGET = Number(process.env.CYCLE_TARGET || 400), MAX_MIN = Number(process.env.CYCLE_MAX_MIN || 90);
-const LANGS = (process.env.WORKER_LANGS || 'ar,fr,zh,en').split(',').map((s) => s.trim()).filter(Boolean);
+const LANGS = (process.env.WORKER_LANGS || 'ar,en,fr,zh').split(',').map((s) => s.trim()).filter(Boolean);
 const SRC = (process.env.SOURCES || 'wikisource,archive,gutendex').split(',').map((s) => s.trim()).filter((s) => ALL[s]);
 const WEIGHT = { ar: 0.4, fr: 0.2, zh: 0.15, en: 0.25 };
 const deadline = Date.now() + MAX_MIN * 60000;
@@ -27,20 +27,13 @@ async function getJob(a, lang) {
 }
 const log = (job, level, ext, message, detail) => db.from('import_logs').insert({ job_id: job?.id ?? null, level, external_id: ext, message: String(message).slice(0, 500), detail }).then(() => {}, () => {});
 
+// NOTHING of the text is stored: the chapter was fetched only to VERIFY it is readable; we keep the list (number, name, word/paragraph counts, source ref).
 async function send(a, r, chs) {
-  const groups = []; let cur = [], size = 0;
-  for (const ch of chs) { const sz = ch.paragraphs.reduce((n, x) => n + x.length, 0); if (cur.length && size + sz > 300000) { groups.push(cur); cur = []; size = 0; } cur.push(ch); size += sz; }
-  if (cur.length) groups.push(cur);
-  let out = null, c = 0, p = 0;
-  for (let g = 0; g < groups.length; g++) {
-    const res = await withRetry(async () => {
-      const { data, error } = await db.rpc('import_work', { p: { ...r, raw_meta: { source: a.id, ocr: a.id === 'archive' ? (r.ocr || true) : false }, chapters: groups[g], append: g > 0, final: g === groups.length - 1 } });
-      if (error) throw error; return data;
-    }, { tries: 4, base: 1500, label: 'rpc' });
-    if (res.status !== 'imported') return res;
-    c += res.chapters; p += res.paragraphs; out = { ...res, chapters: c, paragraphs: p };
-  }
-  return out || { status: 'rejected', reason: 'no_chapters' };
+  const list = chs.map((c) => ({ number: c.number, name: c.name, words: c.words, paragraph_count: c.paragraphs.length, split_method: c.split_method, ref: c.ref || null }));
+  return withRetry(async () => {
+    const { data, error } = await db.rpc('import_work', { p: { ...r, raw_meta: { source: a.id, ocr: a.id === 'archive' ? (r.ocr || true) : false }, chapters: list } });
+    if (error) throw error; return data;
+  }, { tries: 4, base: 1500, label: 'rpc' });
 }
 
 async function runSource(a, lang, want) {
@@ -63,7 +56,7 @@ async function runSource(a, lang, want) {
           const why = a.qualify(r); if (why) return skip(why);
           const { data: ex } = await db.from('work_sources').select('id').eq('source_id', a.id).eq('external_id', r.external_id).limit(1);
           if (ex?.length) return skip('already_imported');
-          const chs = (await a.chapters(r, lim(a))).map((c) => ({ ...c, words: c.paragraphs.join(' ').split(/\s+/).length }));
+          const chs = (await a.chapters(r, lim(a))).map((c) => ({ ...c, words: c.paragraphs.join(' ').split(/\s+/).filter(Boolean).length }));
           const words = chs.reduce((n, c) => n + c.words, 0);
           if (!chs.length || words < a.minWords) return skip('too_short_or_empty');
           if (a.cover) { try { const img = await a.cover(r, lim(a)); if (img) r.cover_url = await uploadCover(db, a.id, r.external_id, img); } catch { /* generated poster is used */ } }
@@ -103,7 +96,7 @@ for (const lang of LANGS) {
   }
   carry = Math.max(0, left);       // unmet quota rolls to the next language (so the cycle still approaches the target)
 }
-let covers = null; try { covers = await backfillCovers(db, 60); console.log('COVERS', JSON.stringify(covers)); } catch (e) { console.log('covers skipped:', e.message); }
+let covers = null; try { covers = await backfillCovers(db, Number(process.env.COVER_BACKFILL || 150)); console.log('COVERS', JSON.stringify(covers)); } catch (e) { console.log('covers skipped:', e.message); }
 const tot = report.reduce((t, s) => ({ imported: t.imported + s.imported, chapters: t.chapters + s.chapters, paragraphs: t.paragraphs + s.paragraphs, failed: t.failed + s.failed }), { imported: 0, chapters: 0, paragraphs: 0, failed: 0 });
 console.log('CYCLE SUMMARY', JSON.stringify({ target: TARGET, ...tot, skippedSources: report.filter((s) => s.status === 'SKIPPED').map((s) => `${s.source}/${s.lang}`) }));
 await log(null, 'info', null, 'cycle summary', { target: TARGET, ...tot, covers, report });
