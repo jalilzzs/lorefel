@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+اااااimport { createClient } from '@supabase/supabase-js'
 import { AUTO_KEYWORDS, FAST_SOURCE_IDS, fetchFromSource } from '../src/lib/sources.js'
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
