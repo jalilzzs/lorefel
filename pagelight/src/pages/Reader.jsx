@@ -247,6 +247,7 @@ export default function Reader() {
         {loading && <div className="stack">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} h={18} w={`${70 + ((i * 13) % 30)}%`} />)}</div>}
         {!loading && (!chap || chap.missing) && <Empty icon="book" title={t('chapter.missing')} />}
         {!loading && chap?.error && <Empty icon="alert" title={t('chapter.error')} />}
+        {!loading && chap?.error && chap.detail && <p dir="ltr" style={{ textAlign: 'center', fontSize: 12, opacity: 0.6, marginTop: 8 }}>{chap.detail}</p>}
         {!comic && paras.map((p, i) => (
           <p key={i} data-p={i} className={cx('para', tts.idx === i && 'tts-on', pins.has(i) && 'pinned')} lang={title.lang}>
             {pins.has(i) && <Icon name="pin" size={13} className="pin-mark" />}

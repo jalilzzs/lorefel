@@ -17,7 +17,7 @@ export async function loadChapter(t, n, version = 'official') {
       return { n, name: chapterTitle(t, n), missing: true }
     } catch (e) {
       console.warn('[reader] chapter load failed', e)
-      return { n, name: chapterTitle(t, n), error: true }
+      return { n, name: chapterTitle(t, n), error: true, detail: String(e?.message || e).slice(0, 160) }
     }
   }
   const custom = await catalog.loadCustomChapter(t.id, n, version)
