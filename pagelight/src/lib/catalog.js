@@ -3,7 +3,8 @@
 import { mulberry32, lsGet, lsSet, escapeXml, hash } from './util'
 import { isLive, supabase, DEMO_MODE } from './supabase'
 import { importFromSources, SOURCES } from './sources'
-const READER_API = (import.meta.env.VITE_READER_API || '').replace(/\/$/, '')
+const _ra = String(import.meta.env.VITE_READER_API || '').trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '')
+const READER_API = _ra && !/^https?:\/\//i.test(_ra) ? `https://${_ra}` : _ra   // tolerate a value typed without https://
 
 export const CATALOG_SIZE = 100000
 export const GENRES = ['action', 'fantasy', 'romance', 'thriller', 'mystery', 'scifi', 'historical', 'sliceoflife', 'horror', 'drama', 'wuxia', 'xianxia', 'litrpg', 'psychological', 'comedy', 'sports', 'supernatural', 'isekai', 'adventure', 'school', 'mecha', 'tragedy']
@@ -424,7 +425,7 @@ export const catalog = {
       const r = await fetch(`${READER_API}/api/chapter?title=${id}&n=${n}&v=${encodeURIComponent(version)}`)
       if (r.status === 404) return null
       if (!r.ok) throw new Error(`reader API ${r.status}`)
-      const j = await r.json()
+      let j; try { j = await r.json() } catch { throw new Error(`reader API returned a non-JSON answer (${READER_API || 'no address'})`) }
       if (j.paras?.length) return { n, name: j.name || ch.name, paras: j.paras }
       if (j.pages?.length) return { n, name: j.name || ch.name, pages: j.pages }
       return null
