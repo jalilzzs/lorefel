@@ -31,8 +31,11 @@ const ps = htmlToParagraphs('<div class="navbox"><table><tr><td><p>nav</p></td><
 assert.deepEqual(ps, ['مرحبا & أهلاً بالعالم', 'Second one ’x']);
 const ar = await import('./archive.mjs');
 assert.equal(ar.qualify({ licenseurl: 'http://creativecommons.org/publicdomain/mark/1.0/' }), null);
-assert.equal(ar.qualify({ licenseurl: 'https://creativecommons.org/licenses/by-nc/4.0/' }), 'license_not_public_domain');
-assert.equal(ar.qualify({}), 'license_not_public_domain');
+assert.equal(ar.qualify({ licenseurl: 'https://creativecommons.org/licenses/by-nc/4.0/' }), null);
+assert.equal(ar.qualify({ licenseurl: 'https://creativecommons.org/licenses/by-nd/4.0/' }), 'license_not_allowed');
+assert.equal(ar.qualify({ licenseurl: 'https://creativecommons.org/licenses/by-nc-nd/4.0/' }), 'license_not_allowed');
+assert.equal(ar.qualify({ licenseurl: 'http://example.com/all-rights' }), 'license_not_allowed');
+assert.equal(ar.qualify({}), 'license_not_allowed');
 console.log('html/archive ok');
 const ocr = await import('./ocr.mjs');
 const base = ('مدرسة جميلة كبيرة في المدينة القديمة ').repeat(12);
@@ -66,4 +69,24 @@ console.log('ocr ok', ok.report.quality);
   assert.ok(pickOpenLibrary(w1, [{ title: 'Les Misérables', author_name: ['Victor Hugo'] }])); assert.equal(pickOpenLibrary(w1, [{ title: 'Les Misérables', author_name: ['X'] }]), null);
   assert.ok(pickJikan({ title_norm: 'solo leveling' }, [{ title: 'A', title_english: 'Solo Leveling' }])); assert.equal(pickJikan({ title_norm: 'solo leveling' }, [{ title: 'B' }]), null);
   console.log('reader/enrich ok');
+}
+
+// custom (licensed) sources
+{
+  const { assertSafeUrl, validateWork, textFromUrl } = await import('./custom.mjs');
+  assert.throws(() => assertSafeUrl('http://example.com/a')); assert.throws(() => assertSafeUrl('https://localhost/a')); assert.throws(() => assertSafeUrl('https://192.168.1.5/x')); assert.throws(() => assertSafeUrl('https://169.254.169.254/'));
+  assert.ok(assertSafeUrl('https://raw.githubusercontent.com/u/r/main/1.txt'));
+  const ok = validateWork({ id: 'n1', type: 'novel', title: 'T', language: 'ar', genres: ['Fantasy'], chapters: [{ url: 'https://x.org/1.txt' }, { number: 2, url: 'https://x.org/2.md' }] });
+  assert.ok(ok.ok); assert.deepEqual(ok.work.chapters.map((c) => c.number), [1, 2]); assert.deepEqual(ok.work.genres, ['fantasy']);
+  assert.equal(validateWork({ id: 'a', type: 'novel', title: 'T', chapters: [{ url: 'http://x.org/1.txt' }] }).ok, false);
+  assert.equal(validateWork({ id: 'a', type: 'book', title: 'T', chapters: [{}] }).ok, false);
+  assert.equal(validateWork({ id: 'a', type: 'novel', title: 'T', language: 'de', chapters: [{ url: 'https://x.org/1' }] }).ok, false);
+  assert.equal(validateWork({ id: 'c', type: 'manhwa', title: 'T', chapters: [{ pages: [] }] }).ok, false);
+  assert.ok(validateWork({ id: 'c', type: 'manhwa', title: 'T', chapters: [{ pages: ['https://x.org/1.jpg'] }] }).ok);
+  const rf = globalThis.fetch;
+  globalThis.fetch = async (u) => new Response(String(u).endsWith('.html') ? '<p>مرحبا بالعالم</p><p>فقرة ثانية</p>' : '# عنوان\n\nالفقرة الأولى.\n\nالفقرة الثانية.', { status: 200 });
+  assert.deepEqual(await textFromUrl('https://x.org/a.txt'), ['عنوان', 'الفقرة الأولى.', 'الفقرة الثانية.']);
+  assert.deepEqual(await textFromUrl('https://x.org/a.html'), ['مرحبا بالعالم', 'فقرة ثانية']);
+  globalThis.fetch = rf;
+  console.log('custom sources ok');
 }
