@@ -4,6 +4,7 @@ import { RateLimiter } from './core.mjs';
 import * as wikisource from './wikisource.mjs';
 import * as archive from './archive.mjs';
 import * as gutenberg from './gutenberg-adapter.mjs';
+import * as openfiction from './openfiction.mjs';
 import * as mangadex from './mangadex.mjs';
 
 const MAX_BYTES = Number(process.env.READER_CACHE_MB || 64) * 1048576;
@@ -31,7 +32,7 @@ export async function cached(key, fn, { ttl = TTL, sizeOf = () => 2000 } = {}) {
 
 const limiters = {};
 const lim = (id) => (limiters[id] ||= new RateLimiter({ mangadex: 2, wikisource: 3 }[id] || 1));
-const BOOK = { gutendex: gutenberg, archive };
+const BOOK = { gutendex: gutenberg, archive, openfiction };
 const bookSize = (chs) => chs.reduce((n, c) => n + c.paragraphs.reduce((m, p) => m + p.length * 2, 0), 0);
 
 /** Returns { n, name, paras } | { n, name, pages } | null (chapter unknown). Throws on source failure. */
