@@ -1,17 +1,18 @@
 // Multi-source novel importer (metadata only: no chapter text is written to the database). One cycle = a quota of works spread over languages (Arabic first) and sources.
 // A source that errors out is SKIPPED for the cycle (logged, flagged in content_sources); the others continue.
-// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CYCLE_TARGET=400, CYCLE_MAX_MIN=90, WORKER_LANGS=ar,fr,zh,en, SOURCES=wikisource,archive,gutendex
+// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CYCLE_TARGET=400, CYCLE_MAX_MIN=90, WORKER_LANGS=ar,fr,zh,en, SOURCES=wikisource,archive,gutendex,openfiction
 import { createClient } from '@supabase/supabase-js';
 import { RateLimiter, pool, withRetry } from './core.mjs';
 import * as wikisource from './wikisource.mjs';
 import * as archive from './archive.mjs';
 import * as gutenberg from './gutenberg-adapter.mjs';
+import * as openfiction from './openfiction.mjs';
 import { uploadCover, backfillCovers } from './covers.mjs';
 
-const ALL = { wikisource, archive, gutendex: gutenberg };
+const ALL = { wikisource, archive, gutendex: gutenberg, openfiction };
 const TARGET = Number(process.env.CYCLE_TARGET || 400), MAX_MIN = Number(process.env.CYCLE_MAX_MIN || 90);
 const LANGS = (process.env.WORKER_LANGS || 'ar,en,fr,zh').split(',').map((s) => s.trim()).filter(Boolean);
-const SRC = (process.env.SOURCES || 'wikisource,archive,gutendex').split(',').map((s) => s.trim()).filter((s) => ALL[s]);
+const SRC = (process.env.SOURCES || 'wikisource,archive,gutendex,openfiction').split(',').map((s) => s.trim()).filter((s) => ALL[s]);
 const WEIGHT = { ar: 0.4, fr: 0.2, zh: 0.15, en: 0.25 };
 const deadline = Date.now() + MAX_MIN * 60000;
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
