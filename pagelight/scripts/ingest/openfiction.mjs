@@ -4,18 +4,27 @@ import { splitChapters } from './text.mjs';
 
 export const id = 'openfiction';
 export const rps = 0.5;
-export const minWords = 1500;
+export const minWords = 1200;
 
 const LANG_MAP = { ar: 'Arabic', en: 'English', fr: 'French', zh: 'Chinese' };
 
 export async function list(lang, cursor, limiter) {
   const page = cursor?.page || 1;
   const iaLang = LANG_MAP[lang] || 'English';
-  // Query only modern creative-commons licensed fiction in Fantasy, Horror, Sci-Fi, Action, Thriller
-  const q = encodeURIComponent(
-    `mediatype:(texts) AND language:(${iaLang}) AND licenseurl:(*creativecommons.org*) AND subject:(fantasy OR horror OR "science fiction" OR thriller OR action OR mystery)`
+  const query = `mediatype:(texts) AND language:(${iaLang}) AND licenseurl:(*creativecommons.org*) AND subject:(fantasy OR horror OR "science fiction" OR thriller OR action OR mystery OR fiction)`;
+
+  const params = new URLSearchParams({
+    q: query,
+    rows: '30',
+    page: String(page),
+    output: 'json',
+  });
+  ['identifier', 'title', 'creator', 'description', 'year', 'subject', 'licenseurl'].forEach((f) =>
+    params.append('fl[]', f)
   );
-  const url = `https://archive.org{q}&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=description&fl[]=year&fl[]=subject&fl[]=licenseurl&sort[]=downloads+desc&rows=30&page=${page}&output=json`;
+  params.append('sort[]', 'downloads desc');
+
+  const url = `https://archive.org{params.toString()}`;
   const data = await fetchJson(url, limiter);
   const docs = data?.response?.docs || [];
 
@@ -40,7 +49,7 @@ export async function list(lang, cursor, limiter) {
       cover_url: `https://archive.org{d.identifier}`,
       is_mature: false,
       source_url: `https://archive.org{d.identifier}`,
-      license: d.licenseurl || 'Creative Commons (Open Fiction)',
+      license: Array.isArray(d.licenseurl) ? d.licenseurl[0] : d.licenseurl || 'Creative Commons (Open Fiction)',
     };
   });
 
@@ -58,14 +67,13 @@ export function qualify(r) {
 export async function chapters(r, limiter) {
   const meta = await fetchJson(`https://archive.org{r.external_id}`, limiter);
   const files = meta?.files || [];
-  // Prefer clean digital TXT or EPUB-extracted text (avoid bad raw scans)
   const txtFile =
     files.find((f) => f.name?.endsWith('.txt') && !f.name.includes('_djvu')) ||
     files.find((f) => f.name?.endsWith('_djvu.txt'));
   if (!txtFile) return [];
 
   const raw = await fetchText(`https://archive.org{r.external_id}/${encodeURIComponent(txtFile.name)}`, limiter);
-  if (!raw || raw.length < 3000) return [];
+  if (!raw || raw.length < 2500) return [];
   return splitChapters(raw, r.language);
 }
 
